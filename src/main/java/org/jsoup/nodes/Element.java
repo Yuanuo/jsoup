@@ -1697,4 +1697,61 @@ public class Element extends Node {
             && previousSibling() != null
             && !out.outline();
     }
+
+    private Object userData;
+    public Element appendElement(String tagName, Object userData) {
+        Element child = appendElement(tagName);
+        child.userData = userData;
+        return child;
+    }
+
+    public Object getUserData() {
+        return userData;
+    }
+
+    public Element setUserData(Object userData) {
+        this.userData = userData;
+        return this;
+    }
+
+    /**
+     * Create and append a new CDataNode to this element.
+     *
+     * @param text the unencoded text to add
+     * @return this element
+     */
+    public Element appendCDATA(String text) {
+        Validate.notNull(text);
+        CDataNode node = new CDataNode(text);
+        appendChild(node);
+        return this;
+    }
+
+    /**
+     * Create and prepend a new CDataNode to this element.
+     *
+     * @param text the unencoded text to add
+     * @return this element
+     */
+    public Element prependCDATA(String text) {
+        Validate.notNull(text);
+        CDataNode node = new CDataNode(text);
+        prependChild(node);
+        return this;
+    }
+
+    /**
+     * Set the CDATA text of this element. Any existing contents (text or elements) will be cleared
+     * @param text unencoded text
+     * @return this element
+     */
+    public Element textCDATA(String text) {
+        Validate.notNull(text);
+
+        empty();
+        CDataNode textNode = new CDataNode(text);
+        appendChild(textNode);
+
+        return this;
+    }
 }

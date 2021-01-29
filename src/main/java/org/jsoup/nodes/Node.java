@@ -81,6 +81,45 @@ public abstract class Node implements Cloneable {
     }
 
     /**
+     * @see #attr(String) but with defaultValue to instead empty string
+     * @param attributeKey The attribute key.
+     * @param defaultValue The default value if not present.
+     * @return The attribute, or default value if not present.
+     */
+    public String attrOr(String attributeKey, String defaultValue) {
+        final String attrVal = attr(attributeKey);
+        return attrVal.isEmpty() ? defaultValue : attrVal;
+    }
+
+    /**
+     * used for quick check the value of attribute key, is same as given value
+     * @param attributeKey The attribute key
+     * @param attributeValue The excepted attribute value
+     * @return true if attribute value equals given value
+     */
+    public boolean attrIs(String attributeKey, String attributeValue) {
+        Validate.notNull(attributeKey);
+
+        return attr(attributeKey).equals(attributeValue);
+    }
+
+    /**
+     * used for quick check the value of attribute key, is contains in given values
+     * @param attributeKey The attribute key
+     * @param attributeValues The excepted attribute value(s)
+     * @return true if attribute value contains in given values
+     */
+    public boolean attrIn(String attributeKey, String... attributeValues) {
+        Validate.notNull(attributeKey);
+
+        final String attrVal = attr(attributeKey);
+        for (String attributeValue : attributeValues)
+            if (attrVal.equals(attributeValue))
+                return true;
+        return false;
+    }
+
+    /**
      * Get all of the element's attributes.
      * @return attributes (which implements iterable, in same order as presented in original HTML).
      */
