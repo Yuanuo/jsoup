@@ -137,9 +137,12 @@ public final class CharacterReader {
         return val;
     }
 
+    /**
+     Unconsume one character (bufPos--). MUST only be called directly after a consume(), and no chance of a bufferUp.
+     */
     void unconsume() {
         if (bufPos < 1)
-            throw new UncheckedIOException(new IOException("No buffer left to unconsume"));
+            throw new UncheckedIOException(new IOException("WTF: No buffer left to unconsume.")); // a bug if this fires, need to trace it.
 
         bufPos--;
     }
@@ -359,8 +362,8 @@ public final class CharacterReader {
     }
 
     String consumeTagName() {
-        // '\t', '\n', '\r', '\f', ' ', '/', '>', nullChar
-        // NOTE: out of spec, added '<' to fix common author bugs
+        // '\t', '\n', '\r', '\f', ' ', '/', '>'
+        // NOTE: out of spec, added '<' to fix common author bugs; does not stop and append on nullChar but eats
         bufferUp();
         int pos = bufPos;
         final int start = pos;
@@ -377,7 +380,6 @@ public final class CharacterReader {
                 case '/':
                 case '>':
                 case '<':
-                case TokeniserState.nullChar:
                     break OUTER;
             }
             pos++;
@@ -512,6 +514,17 @@ public final class CharacterReader {
         return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || Character.isLetter(c);
     }
 
+    /**
+     Checks if the current pos matches an ascii alpha (A-Z a-z) per https://infra.spec.whatwg.org/#ascii-alpha
+     @return if it matches or not
+     */
+    boolean matchesAsciiAlpha() {
+        if (isEmpty())
+            return false;
+        char c = charBuf[bufPos];
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+    }
+
     boolean matchesDigit() {
         if (isEmpty())
             return false;
@@ -553,7 +566,7 @@ public final class CharacterReader {
     }
 
     /**
-     * Caches short strings, as a flywheel pattern, to reduce GC load. Just for this doc, to prevent leaks.
+     * Caches short strings, as a flyweight pattern, to reduce GC load. Just for this doc, to prevent leaks.
      * <p />
      * Simplistic, and on hash collisions just falls back to creating a new string, vs a full HashMap with Entry list.
      * That saves both having to create objects as hash keys, and running through the entry list, at the expense of
@@ -567,27 +580,22 @@ public final class CharacterReader {
             return "";
 
         // calculate hash:
-        int hash = 31 * count;
-        int offset = start;
+        int hash = 0;
         for (int i = 0; i < count; i++) {
-            hash = 31 * hash + charBuf[offset++];
+            hash = 31 * hash + charBuf[start + i];
         }
 
         // get from cache
         final int index = hash & stringCacheSize - 1;
         String cached = stringCache[index];
 
-        if (cached == null) { // miss, add
+        if (cached != null && rangeEquals(charBuf, start, count, cached)) // positive hit
+            return cached;
+        else {
             cached = new String(charBuf, start, count);
-            stringCache[index] = cached;
-        } else { // hashcode hit, check equality
-            if (rangeEquals(charBuf, start, count, cached)) { // hit
-                return cached;
-            } else { // hashcode conflict
-                cached = new String(charBuf, start, count);
-                stringCache[index] = cached; // update the cache, as recently used strings are more likely to show up again
-            }
+            stringCache[index] = cached; // add or replace, assuming most recently used are most likely to recur next
         }
+
         return cached;
     }
 

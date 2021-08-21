@@ -126,6 +126,16 @@ public abstract class Node implements Cloneable {
     public abstract Attributes attributes();
 
     /**
+     Get the number of attributes that this Node has.
+     @return the number of attributes
+     @since 1.14.2
+     */
+    public int attributesSize() {
+        // added so that we can test how many attributes exist without implicitly creating the Attributes object
+        return hasAttributes() ? attributes().size() : 0;
+    }
+
+    /**
      * Set an attribute (key=value). If the attribute already exists, it is replaced. The attribute key comparison is
      * <b>case insensitive</b>. The key will be set with case sensitivity as set in the parser settings.
      * @param attributeKey The attribute key.
@@ -139,7 +149,7 @@ public abstract class Node implements Cloneable {
     }
 
     /**
-     * Test if this element has an attribute. <b>Case insensitive</b>
+     * Test if this Node has an attribute. <b>Case insensitive</b>.
      * @param attributeKey The attribute key to check.
      * @return true if the attribute exists, false if not.
      */
@@ -150,7 +160,7 @@ public abstract class Node implements Cloneable {
 
         if (attributeKey.startsWith("abs:")) {
             String key = attributeKey.substring("abs:".length());
-            if (attributes().hasKeyIgnoreCase(key) && !absUrl(key).equals(""))
+            if (attributes().hasKeyIgnoreCase(key) && !absUrl(key).isEmpty())
                 return true;
         }
         return attributes().hasKeyIgnoreCase(attributeKey);
@@ -232,12 +242,10 @@ public abstract class Node implements Cloneable {
      */
     public String absUrl(String attributeKey) {
         Validate.notEmpty(attributeKey);
+        if (!(hasAttributes() && attributes().hasKeyIgnoreCase(attributeKey))) // not using hasAttr, so that we don't recurse down hasAttr->absUrl
+            return "";
 
-        if (!hasAttr(attributeKey)) {
-            return ""; // nothing to make absolute with
-        } else {
-            return StringUtil.resolve(baseUri(), attr(attributeKey));
-        }
+        return StringUtil.resolve(baseUri(), attributes().getIgnoreCase(attributeKey));
     }
 
     protected abstract List<Node> ensureChildNodes();
@@ -749,6 +757,7 @@ public abstract class Node implements Cloneable {
      * @return a stand-alone cloned node, including clones of any children
      * @see #shallowClone()
      */
+    @SuppressWarnings("MethodDoesntCallSuperMethod") // because it does call super.clone in doClone - analysis just isn't following
     @Override
     public Node clone() {
         Node thisClone = doClone(null); // splits for orphan

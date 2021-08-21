@@ -46,6 +46,7 @@ public class Attributes implements Iterable<Attribute>, Cloneable {
     static final int NotFound = -1;
     private static final String EmptyString = "";
 
+    // the number of instance fields is kept as low as possible giving an object size of 24 bytes
     private int size = 0; // number of slots used (not total capacity, which is keys.length)
     String[] keys = new String[InitialCapacity];
     String[] vals = new String[InitialCapacity];
@@ -126,7 +127,7 @@ public class Attributes implements Iterable<Attribute>, Cloneable {
      * @param value attribute value (may be null, to set a boolean attribute)
      * @return these attributes, for chaining
      */
-    public Attributes put(String key, String value) {
+    public Attributes put(String key, @Nullable String value) {
         Validate.notNull(key);
         int i = indexOfKey(key);
         if (i != NotFound)
@@ -246,16 +247,12 @@ public class Attributes implements Iterable<Attribute>, Cloneable {
     }
 
     /**
-     Get the number of attributes in this set.
+     Get the number of attributes in this set, including any jsoup internal-only attributes. Internal attributes are
+     excluded from the {@link #html()}, {@link #asList()}, and {@link #iterator()} methods.
      @return size
      */
     public int size() {
-        int s = 0;
-        for (int i = 0; i < size; i++) {
-            if (!isInternalKey(keys[i]))
-                s++;
-        }
-        return s;
+        return size;
     }
 
     /**
@@ -278,7 +275,6 @@ public class Attributes implements Iterable<Attribute>, Cloneable {
             // todo - should this be case insensitive?
             put(attr);
         }
-
     }
 
     public Iterator<Attribute> iterator() {

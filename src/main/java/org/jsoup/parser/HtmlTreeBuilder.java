@@ -47,9 +47,9 @@ public class HtmlTreeBuilder extends TreeBuilder {
     private HtmlTreeBuilderState originalState; // original / marked state
 
     private boolean baseUriSetFromDoc;
-    private Element headElement; // the current head element
-    private FormElement formElement; // the current form element
-    private Element contextElement; // fragment parse context -- could be null even if fragment parsing
+    private @Nullable Element headElement; // the current head element
+    private @Nullable FormElement formElement; // the current form element
+    private @Nullable Element contextElement; // fragment parse context -- could be null even if fragment parsing
     private ArrayList<Element> formattingElements; // active (open) formatting elements
     private List<String> pendingTableCharacters; // chars in table to be shifted out
     private Token.EndTag emptyEnd; // reused empty end tag
@@ -274,9 +274,7 @@ public class HtmlTreeBuilder extends TreeBuilder {
 
     void insert(Token.Character characterToken) {
         final Node node;
-        Element el = currentElement();
-        if (el == null)
-            el = doc; // allows for whitespace to be inserted into the doc root object (not on the stack)
+        Element el = currentElement(); // will be doc if no current element; allows for whitespace to be inserted into the doc root object (not on the stack)
         final String tagName = el.normalName();
         final String data = characterToken.getData();
 
@@ -322,8 +320,11 @@ public class HtmlTreeBuilder extends TreeBuilder {
         return isElementInQueue(stack, el);
     }
 
+    private static final int maxQueueDepth = 256; // an arbitrary tension point between real HTML and crafted pain
     private boolean isElementInQueue(ArrayList<Element> queue, Element element) {
-        for (int pos = queue.size() -1; pos >= 0; pos--) {
+        final int bottom = queue.size() - 1;
+        final int upper = bottom >= maxQueueDepth ? bottom - maxQueueDepth : 0;
+        for (int pos = bottom; pos >= upper; pos--) {
             Element next = queue.get(pos);
             if (next == element) {
                 return true;
@@ -332,8 +333,11 @@ public class HtmlTreeBuilder extends TreeBuilder {
         return false;
     }
 
+    @Nullable
     Element getFromStack(String elName) {
-        for (int pos = stack.size() -1; pos >= 0; pos--) {
+        final int bottom = stack.size() - 1;
+        final int upper = bottom >= maxQueueDepth ? bottom - maxQueueDepth : 0;
+        for (int pos = bottom; pos >= upper; pos--) {
             Element next = stack.get(pos);
             if (next.normalName().equals(elName)) {
                 return next;
@@ -353,6 +357,7 @@ public class HtmlTreeBuilder extends TreeBuilder {
         return false;
     }
 
+    @Nullable
     Element popStackToClose(String elName) {
         for (int pos = stack.size() -1; pos >= 0; pos--) {
             Element el = stack.get(pos);
@@ -434,17 +439,27 @@ public class HtmlTreeBuilder extends TreeBuilder {
     }
 
     void resetInsertionMode() {
+        // https://html.spec.whatwg.org/multipage/parsing.html#the-insertion-mode
         boolean last = false;
-        for (int pos = stack.size() -1; pos >= 0; pos--) {
+        final int bottom = stack.size() - 1;
+        final int upper = bottom >= maxQueueDepth ? bottom - maxQueueDepth : 0;
+
+        if (stack.size() == 0) { // nothing left of stack, just get to body
+            transition(HtmlTreeBuilderState.InBody);
+        }
+
+        for (int pos = bottom; pos >= upper; pos--) {
             Element node = stack.get(pos);
             if (pos == 0) {
                 last = true;
-                node = contextElement;
+                if (fragmentParsing)
+                    node = contextElement;
             }
-            String name = node.normalName();
+            String name = node != null ? node.normalName() : "";
             if ("select".equals(name)) {
                 transition(HtmlTreeBuilderState.InSelect);
-                break; // frag
+                // todo - should loop up (with some limit) and check for table or template hits
+                break;
             } else if (("td".equals(name) || "th".equals(name) && !last)) {
                 transition(HtmlTreeBuilderState.InCell);
                 break;
@@ -459,25 +474,26 @@ public class HtmlTreeBuilder extends TreeBuilder {
                 break;
             } else if ("colgroup".equals(name)) {
                 transition(HtmlTreeBuilderState.InColumnGroup);
-                break; // frag
+                break;
             } else if ("table".equals(name)) {
                 transition(HtmlTreeBuilderState.InTable);
                 break;
-            } else if ("head".equals(name)) {
-                transition(HtmlTreeBuilderState.InBody);
-                break; // frag
+            // todo - template
+            } else if ("head".equals(name) && !last) {
+                transition(HtmlTreeBuilderState.InHead);
+                break;
             } else if ("body".equals(name)) {
                 transition(HtmlTreeBuilderState.InBody);
                 break;
             } else if ("frameset".equals(name)) {
                 transition(HtmlTreeBuilderState.InFrameset);
-                break; // frag
+                break;
             } else if ("html".equals(name)) {
-                transition(HtmlTreeBuilderState.BeforeHead);
-                break; // frag
+                transition(headElement == null ? HtmlTreeBuilderState.BeforeHead : HtmlTreeBuilderState.AfterHead);
+                break;
             } else if (last) {
                 transition(HtmlTreeBuilderState.InBody);
-                break; // frag
+                break;
             }
         }
     }
@@ -590,7 +606,7 @@ public class HtmlTreeBuilder extends TreeBuilder {
      process, then the UA must perform the above steps as if that element was not in the above list.
      */
     void generateImpliedEndTags(String excludeTag) {
-        while ((excludeTag != null && !currentElement().normalName().equals(excludeTag)) &&
+        while ((excludeTag != null && !currentElementIs(excludeTag)) &&
                 inSorted(currentElement().normalName(), TagSearchEndTags))
             pop();
     }
@@ -610,6 +626,14 @@ public class HtmlTreeBuilder extends TreeBuilder {
         return formattingElements.size() > 0 ? formattingElements.get(formattingElements.size()-1) : null;
     }
 
+    int positionOfElement(Element el){
+        for (int i = 0; i < formattingElements.size(); i++){
+            if (el == formattingElements.get(i))
+                return i;
+        }
+        return -1;
+    }
+
     Element removeLastFormattingElement() {
         int size = formattingElements.size();
         if (size > 0)
@@ -620,6 +644,21 @@ public class HtmlTreeBuilder extends TreeBuilder {
 
     // active formatting elements
     void pushActiveFormattingElements(Element in) {
+        checkActiveFormattingElements(in);
+        formattingElements.add(in);
+    }
+
+    void pushWithBookmark(Element in, int bookmark){
+        checkActiveFormattingElements(in);
+        // catch any range errors and assume bookmark is incorrect - saves a redundant range check.
+        try {
+            formattingElements.add(bookmark, in);
+        } catch (IndexOutOfBoundsException e) {
+            formattingElements.add(in);
+        }
+    }
+
+    void checkActiveFormattingElements(Element in){
         int numSeen = 0;
         for (int pos = formattingElements.size() -1; pos >= 0; pos--) {
             Element el = formattingElements.get(pos);
@@ -634,7 +673,6 @@ public class HtmlTreeBuilder extends TreeBuilder {
                 break;
             }
         }
-        formattingElements.add(in);
     }
 
     private boolean isSameFormattingElement(Element a, Element b) {
@@ -652,10 +690,11 @@ public class HtmlTreeBuilder extends TreeBuilder {
 
         Element entry = last;
         int size = formattingElements.size();
+        int ceil = size - maxUsedFormattingElements; if (ceil <0) ceil = 0;
         int pos = size - 1;
         boolean skip = false;
         while (true) {
-            if (pos == 0) { // step 4. if none before, skip to 8
+            if (pos == ceil) { // step 4. if none before, skip to 8
                 skip = true;
                 break;
             }
@@ -672,7 +711,8 @@ public class HtmlTreeBuilder extends TreeBuilder {
             skip = false; // can only skip increment from 4.
             Element newEl = insertStartTag(entry.normalName()); // todo: avoid fostering here?
             // newEl.namespace(entry.namespace()); // todo: namespaces
-            newEl.attributes().addAll(entry.attributes());
+            if (entry.attributesSize() > 0)
+                newEl.attributes().addAll(entry.attributes());
 
             // 10. replace entry with new entry
             formattingElements.set(pos, newEl);
@@ -682,6 +722,7 @@ public class HtmlTreeBuilder extends TreeBuilder {
                 break;
         }
     }
+    private static final int maxUsedFormattingElements = 12; // limit how many elements get recreated
 
     void clearFormattingElementsToLastMarker() {
         while (!formattingElements.isEmpty()) {
