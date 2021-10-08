@@ -290,4 +290,28 @@ public class XmlTreeBuilderTest {
         assertEquals("<p one=\"&lt;two>&copy;\">Three</p>", doc.html());
     }
 
+    @Test void xmlOutputCorrectsInvalidAttributeNames() {
+        String xml = "<body style=\"color: red\" \" name\"><div =\"\"></div></body>";
+        Document doc = Jsoup.parse(xml, Parser.xmlParser());
+        assertEquals(Syntax.xml, doc.outputSettings().syntax());
+
+        String out = doc.html();
+        assertEquals("<body style=\"color: red\" name=\"\"><div></div></body>", out);
+    }
+
+    @Test void customTagsAreFlyweights() {
+        String xml = "<foo>Foo</foo><foo>Foo</foo><FOO>FOO</FOO><FOO>FOO</FOO>";
+        Document doc = Jsoup.parse(xml, Parser.xmlParser());
+        Elements els = doc.children();
+
+        Tag t1 = els.get(0).tag();
+        Tag t2 = els.get(1).tag();
+        Tag t3 = els.get(2).tag();
+        Tag t4 = els.get(3).tag();
+        assertEquals("foo", t1.getName());
+        assertEquals("FOO", t3.getName());
+        assertSame(t1, t2);
+        assertSame(t3, t4);
+
+    }
 }

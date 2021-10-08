@@ -25,7 +25,7 @@ import static org.jsoup.internal.Normalizer.lowerCase;
  * Attributes are treated as a map: there can be only one value associated with an attribute key/name.
  * </p>
  * <p>
- * Attribute name and value comparisons are  generally <b>case sensitive</b>. By default for HTML, attribute names are
+ * Attribute name and value comparisons are generally <b>case sensitive</b>. By default for HTML, attribute names are
  * normalized to lower-case on parsing. That means you should use lower-case strings when referring to attributes by
  * name.
  * </p>
@@ -350,18 +350,9 @@ public class Attributes implements Iterable<Attribute>, Cloneable {
         for (int i = 0; i < sz; i++) {
             if (isInternalKey(keys[i]))
                 continue;
-
-            // inlined from Attribute.html()
-            final String key = keys[i];
-            final String val = vals[i];
-            accum.append(' ').append(key);
-
-            // collapse checked=null, checked="", checked=checked; write out others
-            if (!Attribute.shouldCollapseAttribute(key, val, out)) {
-                accum.append("=\"");
-                Entities.escape(accum, val == null ? EmptyString : val, out, true, false, false);
-                accum.append('"');
-            }
+            final String key = Attribute.getValidKey(keys[i], out.syntax());
+            if (key != null)
+                Attribute.htmlNoValidate(key, vals[i], accum.append(' '), out);
         }
     }
 
@@ -371,20 +362,32 @@ public class Attributes implements Iterable<Attribute>, Cloneable {
     }
 
     /**
-     * Checks if these attributes are equal to another set of attributes, by comparing the two sets
+     * Checks if these attributes are equal to another set of attributes, by comparing the two sets. Note that the order
+     * of the attributes does not impact this equality (as per the Map interface equals()).
      * @param o attributes to compare with
      * @return if both sets of attributes have the same content
      */
     @Override
-    public boolean equals(Object o) {
+    public boolean equals(@Nullable Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
 
         Attributes that = (Attributes) o;
-
         if (size != that.size) return false;
-        if (!Arrays.equals(keys, that.keys)) return false;
-        return Arrays.equals(vals, that.vals);
+        for (int i = 0; i < size; i++) {
+            String key = keys[i];
+            int thatI = that.indexOfKey(key);
+            if (thatI == NotFound)
+                return false;
+            String val = vals[i];
+            String thatVal = that.vals[thatI];
+            if (val == null) {
+                if (thatVal != null)
+                    return false;
+            } else if (!val.equals(thatVal))
+                return false;
+        }
+        return true;
     }
 
     /**

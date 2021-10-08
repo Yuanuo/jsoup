@@ -55,7 +55,7 @@ public class HtmlParserTest {
         assertEquals("<p one=\"One\" two=\"two\">Text</p>", p.outerHtml()); // normalized names due to lower casing
 
         assertEquals(1, parser.getErrors().size());
-        assertEquals("Duplicate attribute", parser.getErrors().get(0).getErrorMessage());
+        assertEquals("Dropped duplicate attribute(s) in tag [p]", parser.getErrors().get(0).getErrorMessage());
     }
 
     @Test public void retainsAttributesOfDifferentCaseIfSensitive() {
@@ -67,13 +67,13 @@ public class HtmlParserTest {
 
     @Test public void parsesQuiteRoughAttributes() {
         String html = "<p =a>One<a <p>Something</p>Else";
-        // this (used to; now gets cleaner) gets a <p> with attr '=a' and an <a tag with an attribue named '<p'; and then auto-recreated
+        // this (used to; now gets cleaner) gets a <p> with attr '=a' and an <a tag with an attribute named '<p'; and then auto-recreated
         Document doc = Jsoup.parse(html);
 
         // NOTE: per spec this should be the test case. but impacts too many ppl
         // assertEquals("<p =a>One<a <p>Something</a></p>\n<a <p>Else</a>", doc.body().html());
 
-        assertEquals("<p =a>One<a></a></p><p><a>Something</a></p><a>Else</a>", TextUtil.stripNewlines(doc.body().html()));
+        assertEquals("<p a>One<a></a></p><p><a>Something</a></p><a>Else</a>", TextUtil.stripNewlines(doc.body().html()));
 
         doc = Jsoup.parse("<p .....>");
         assertEquals("<p .....></p>", doc.body().html());
@@ -835,29 +835,33 @@ public class HtmlParserTest {
     }
 
     @Test public void tracksErrorsWhenRequested() {
-        String html = "<p>One</p href='no'><!DOCTYPE html>&arrgh;<font /><br /><foo";
+        String html = "<p>One</p href='no'>\n<!DOCTYPE html>\n&arrgh;<font />&#33 &amp &#xD800;<br /></div><foo";
         Parser parser = Parser.htmlParser().setTrackErrors(500);
         Document doc = Jsoup.parse(html, "http://example.com", parser);
 
         List<ParseError> errors = parser.getErrors();
-        assertEquals(5, errors.size());
-        assertEquals("20: Attributes incorrectly present on end tag", errors.get(0).toString());
-        assertEquals("35: Unexpected token [Doctype] when in state [InBody]", errors.get(1).toString());
-        assertEquals("36: Invalid character reference: invalid named reference", errors.get(2).toString());
-        assertEquals("50: Tag cannot be self closing; not a void tag", errors.get(3).toString());
-        assertEquals("61: Unexpectedly reached end of file (EOF) in input state [TagName]", errors.get(4).toString());
+        assertEquals(9, errors.size());
+        assertEquals("<1:21>: Attributes incorrectly present on end tag [/p]", errors.get(0).toString());
+        assertEquals("<2:16>: Unexpected Doctype token [<!doctype html>] when in state [InBody]", errors.get(1).toString());
+        assertEquals("<3:2>: Invalid character reference: invalid named reference [arrgh]", errors.get(2).toString());
+        assertEquals("<3:16>: Tag [font] cannot be self closing; not a void tag", errors.get(3).toString());
+        assertEquals("<3:20>: Invalid character reference: missing semicolon on [&#33]", errors.get(4).toString());
+        assertEquals("<3:25>: Invalid character reference: missing semicolon on [&amp]", errors.get(5).toString());
+        assertEquals("<3:34>: Invalid character reference: character [55296] outside of valid range", errors.get(6).toString());
+        assertEquals("<3:46>: Unexpected EndTag token [</div>] when in state [InBody]", errors.get(7).toString());
+        assertEquals("<3:51>: Unexpectedly reached end of file (EOF) in input state [TagName]", errors.get(8).toString());
     }
 
     @Test public void tracksLimitedErrorsWhenRequested() {
-        String html = "<p>One</p href='no'><!DOCTYPE html>&arrgh;<font /><br /><foo";
+        String html = "<p>One</p href='no'>\n<!DOCTYPE html>\n&arrgh;<font /><br /><foo";
         Parser parser = Parser.htmlParser().setTrackErrors(3);
         Document doc = parser.parseInput(html, "http://example.com");
 
         List<ParseError> errors = parser.getErrors();
         assertEquals(3, errors.size());
-        assertEquals("20: Attributes incorrectly present on end tag", errors.get(0).toString());
-        assertEquals("35: Unexpected token [Doctype] when in state [InBody]", errors.get(1).toString());
-        assertEquals("36: Invalid character reference: invalid named reference", errors.get(2).toString());
+        assertEquals("<1:21>: Attributes incorrectly present on end tag [/p]", errors.get(0).toString());
+        assertEquals("<2:16>: Unexpected Doctype token [<!doctype html>] when in state [InBody]", errors.get(1).toString());
+        assertEquals("<3:2>: Invalid character reference: invalid named reference [arrgh]", errors.get(2).toString());
     }
 
     @Test public void noErrorsByDefault() {
@@ -866,6 +870,14 @@ public class HtmlParserTest {
         Document doc = Jsoup.parse(html, "http://example.com", parser);
 
         List<ParseError> errors = parser.getErrors();
+        assertEquals(0, errors.size());
+    }
+
+    @Test public void optionalPClosersAreNotErrors() {
+        String html = "<body><div><p>One<p>Two</div></body>";
+        Parser parser = Parser.htmlParser().setTrackErrors(128);
+        Document doc = Jsoup.parse(html, "", parser);
+        ParseErrorList errors = parser.getErrors();
         assertEquals(0, errors.size());
     }
 
@@ -1172,11 +1184,11 @@ public class HtmlParserTest {
     }
 
     @Test public void selfClosingOnNonvoidIsError() {
-        String html = "<p>test</p><div /><div>Two</div>";
+        String html = "<p>test</p>\n\n<div /><div>Two</div>";
         Parser parser = Parser.htmlParser().setTrackErrors(5);
         parser.parseInput(html, "");
         assertEquals(1, parser.getErrors().size());
-        assertEquals("18: Tag cannot be self closing; not a void tag", parser.getErrors().get(0).toString());
+        assertEquals("<3:8>: Tag [div] cannot be self closing; not a void tag", parser.getErrors().get(0).toString());
 
         assertFalse(Jsoup.isValid(html, Safelist.relaxed()));
         String clean = Jsoup.clean(html, Safelist.relaxed());
@@ -1477,5 +1489,128 @@ public class HtmlParserTest {
             assertEquals(0, els.size());
             assertEquals("&lt;" + tag + "&gt;Text<!--/" + tag + "-->", doc.body().html());
         }
+    }
+
+    @Test void htmlOutputCorrectsInvalidAttributeNames() {
+        String html = "<body style=\"color: red\" \" name\"><div =\"\"></div></body>";
+        Document doc = Jsoup.parse(html);
+        assertEquals(Document.OutputSettings.Syntax.html, doc.outputSettings().syntax());
+
+        String out = doc.body().outerHtml();
+        assertEquals("<body style=\"color: red\" name>\n <div></div>\n</body>", out);
+    }
+
+    @Test void templateInHead() {
+        // https://try.jsoup.org/~EGp3UZxQe503TJDHQEQEzm8IeUc
+        String html = "<head><template id=1><meta name=tmpl></template><title>Test</title><style>One</style></head><body><p>Two</p>";
+        Document doc = Jsoup.parse(html);
+
+        String want = "<html><head><template id=\"1\"><meta name=\"tmpl\"></template><title>Test</title><style>One</style></head><body><p>Two</p></body></html>";
+        assertEquals(want, TextUtil.stripNewlines(doc.html()));
+
+        Elements template = doc.select("template#1");
+        template.select("meta").attr("content", "Yes");
+        template.unwrap();
+
+        want = "<html><head><meta name=\"tmpl\" content=\"Yes\"><title>Test</title><style>One</style></head><body><p>Two</p></body></html>";
+        assertEquals(want, TextUtil.stripNewlines(doc.html()));
+    }
+
+    @Test void nestedTemplateInBody() {
+        String html = "<body><template id=1><table><tr><template id=2><td>One</td><td>Two</td></template></tr></template></body>";
+        Document doc = Jsoup.parse(html);
+
+        String want = "<html><head></head><body><template id=\"1\"><table><tbody><tr><template id=\"2\"><td>One</td><td>Two</td></template></tr></tbody></table></template></body></html>";
+        assertEquals(want, TextUtil.stripNewlines(doc.html()));
+
+        // todo - will be nice to add some simpler template element handling like clone children etc?
+        Element tmplTbl = doc.selectFirst("template#1");
+        Element tmplRow = doc.selectFirst("template#2");
+        assertNotNull(tmplRow);
+        assertNotNull(tmplTbl);
+        tmplRow.appendChild(tmplRow.clone());
+        doc.select("template").unwrap();
+
+        want = "<html><head></head><body><table><tbody><tr><td>One</td><td>Two</td><td>One</td><td>Two</td></tr></tbody></table></body></html>";
+        assertEquals(want, TextUtil.stripNewlines(doc.html()));
+    }
+
+    @Test void canSelectIntoTemplate() {
+        String html = "<body><div><template><p>Hello</p>";
+        Document doc = Jsoup.parse(html);
+        String want = "<html><head></head><body><div><template><p>Hello</p></template></div></body></html>";
+        assertEquals(want, TextUtil.stripNewlines(doc.html()));
+
+        Element p = doc.selectFirst("div p");
+        Element p1 = doc.selectFirst("template :containsOwn(Hello)");
+        assertEquals("p", p.normalName());
+        assertEquals(p, p1);
+    }
+
+    @Test void tableRowFragment() {
+        Document doc = Jsoup.parse("<body><table></table></body");
+        String html = "<tr><td><img></td></tr>";
+        Element table = doc.selectFirst("table");
+        table.html(html); // invokes the fragment parser with table as context
+        String want = "<tbody><tr><td><img></td></tr></tbody>";
+        assertEquals(want, TextUtil.stripNewlines(table.html()));
+        want = "<table><tbody><tr><td><img></td></tr></tbody></table>";
+        assertEquals(want, TextUtil.stripNewlines(doc.body().html()));
+    }
+
+    @Test void templateTableRowFragment() {
+        // https://github.com/jhy/jsoup/issues/1409 (per the fragment <tr> use case)
+        Document doc = Jsoup.parse("<body><table><template></template></table></body");
+        String html = "<tr><td><img></td></tr>";
+        Element tmpl = doc.selectFirst("template");
+        tmpl.html(html); // invokes the fragment parser with template as context
+        String want = "<tr><td><img></td></tr>";
+        assertEquals(want, TextUtil.stripNewlines(tmpl.html()));
+        tmpl.unwrap();
+
+        want = "<html><head></head><body><table><tr><td><img></td></tr></table></body></html>";
+        assertEquals(want, TextUtil.stripNewlines(doc.html()));
+    }
+
+    @Test void templateNotInTableRowFragment() {
+        // https://github.com/jhy/jsoup/issues/1409 (per the fragment <tr> use case)
+        Document doc = Jsoup.parse("<body><template></template></body");
+        String html = "<tr><td><img></td></tr>";
+        Element tmpl = doc.selectFirst("template");
+        tmpl.html(html); // invokes the fragment parser with template as context
+        String want = "<tr><td><img></td></tr>";
+        assertEquals(want, TextUtil.stripNewlines(tmpl.html()));
+        tmpl.unwrap();
+
+        want = "<html><head></head><body><tr><td><img></td></tr></body></html>";
+        assertEquals(want, TextUtil.stripNewlines(doc.html()));
+    }
+
+    @Test void templateFragment() {
+        // https://github.com/jhy/jsoup/issues/1315
+        String html = "<template id=\"lorem-ipsum\"><tr><td>Lorem</td><td>Ipsum</td></tr></template>";
+        Document frag = Jsoup.parseBodyFragment(html);
+        String want = "<template id=\"lorem-ipsum\"><tr><td>Lorem</td><td>Ipsum</td></tr></template>";
+        assertEquals(want, TextUtil.stripNewlines(frag.body().html()));
+    }
+
+    @Test void templateInferredForm() {
+        // https://github.com/jhy/jsoup/issues/1637 | https://bugs.chromium.org/p/oss-fuzz/issues/detail?id=38987
+        Document doc = Jsoup.parse("<template><isindex action>");
+        assertNotNull(doc);
+        assertEquals("<template><form><hr><label>This is a searchable index. Enter search keywords: <input name=\"isindex\"></label><hr></form></template>",
+            TextUtil.stripNewlines(doc.head().html()));
+    }
+
+    @Test void trimNormalizeElementNamesInBuilder() {
+        // https://github.com/jhy/jsoup/issues/1637 | https://bugs.chromium.org/p/oss-fuzz/issues/detail?id=38983
+        // This is interesting - in TB state, the element name was "template\u001E", so no name checks matched. Then,
+        // when the Element is created, the name got normalized to "template" and so looked like there should be a
+        // template on the stack during resetInsertionMode for the select.
+        // The issue was that the normalization in Tag.valueOf did a trim which the Token.Tag did not
+        Document doc = Jsoup.parse("<template\u001E<select<input<");
+        assertNotNull(doc);
+        assertEquals("<template><select></select><input>&lt;</template>",
+            TextUtil.stripNewlines(doc.head().html()));
     }
 }

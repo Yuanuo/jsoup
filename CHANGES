@@ -1,6 +1,77 @@
 jsoup changelog
 
-*** Release 1.14.2 [PENDING]
+*** Release 1.15.1 [PENDING]
+  * Change: removed previously deprecated methods and classes (including org.jsoup.safety.Whitelist; use
+    org.jsoup.safety.Safelist instead).
+
+  * Improvement: when converting jsoup Documents to W3C Documents in W3CDom, preserve HTML valid attribute names if the
+    input document is using the HTML syntax. (Previously, would always coerce using the more restrictive XML syntax.)
+    <https://github.com/jhy/jsoup/pull/1648>
+
+  * Improvement: added the :containsWholeText(text) selector, to match against non-normalized Element text. That can be
+    useful when elements can only be distinguished by e.g. specific case, or leading whitespace, etc.
+    <https://github.com/jhy/jsoup/issues/1636>
+
+*** Release 1.14.3 [2021-Sep-30]
+  * Improvement: added native XPath support in Element#selectXpath(String)
+    <https://github.com/jhy/jsoup/pull/1629>
+
+  * Improvement: added full support for the <template> tag to the HTML5 parser spec.
+    <https://github.com/jhy/jsoup/issues/1634>
+
+  * Improvement: added support in CharacterReader to track newlines, so that parse errors can be reported more
+    intuitively.
+    <https://github.com/jhy/jsoup/pull/1624>
+
+  * Improvement: tracked parse errors now have more details, including the erroneous token, to help clarify the errors.
+
+  * Improvement: speed and memory optimizations for the :has(subquery) selector.
+
+  * Improvement: the :contains(text) and :containsOwn(text) selectors are now whitespace normalized, aligning to the
+    document text that they are matching against.
+    <https://github.com/jhy/jsoup/issues/876>
+
+  * Improvement: in Element, speed optimized adopting all of an element's child nodes into a currently empty element.
+    Improves the HTML adoption agency algorithm when adopting elements with many children.
+    <https://github.com/jhy/jsoup/issues/1638>
+
+  * Improvement: increased the parse speed when in RCData (e.g. <title>) and unescaped <tag> tokens are found, by
+    memoizing the </title> scan and reducing GC.
+    <https://github.com/jhy/jsoup/issues/1644>
+
+  * Improvement: when parsing custom tags (in HTML or XML), added a flyweight cache on Tag.valueOf(name) to reduce
+    memory overhead when many tags are repeated. Also tuned other areas of the parser when many very deeply stacked
+    custom elements were present.
+    <https://github.com/jhy/jsoup/issues/1646>
+
+  * Bugfix: when tracking errors or checking for validity in the Cleaner, errors were incorrectly raised for missing
+    optional closing tags.
+
+  * Bugfix: the OSGi bundle meta-data incorrectly set a version on the import of javax.annotation (used as a build-time
+    dependency for nullability assertions).
+    <https://github.com/jhy/jsoup/issues/1616>
+
+  * Bugfix: the Attributes::equals() method was sensitive to the order of its contents, but it should not be.
+    <https://github.com/jhy/jsoup/issues/1492>
+
+  * Bugfix: when the HTML parser was configured to preserve case, Element text methods would miss adding whitespace for
+    "BR" tags.
+
+  * Bugfix: attribute names are now normalized & validated correctly for the specific output syntax (HTML or XML).
+    Previously, syntactically invalid attribute names could be output by the html() methods. Such attributes are still
+    available in the DOM, and will be normalized if possible on output.
+    <https://github.com/jhy/jsoup/issues/1474>
+
+  * Bugfix [Fuzz]: fixed an IOOB when an empty select tag was followed by a body tag that needed reparenting.
+    <https://github.com/jhy/jsoup/issues/1639>
+
+  * Build Improvement: fixed nullability annotations for Node.equals(other) and other equals methods.
+    <https://github.com/jhy/jsoup/issues/1628>
+
+  * Build Improvement: added JDK 17 to the CI builds.
+    <https://github.com/jhy/jsoup/pull/1641>
+
+*** Release 1.14.2 [2021-Aug-15]
   * Improvement: support Pattern.quote \Q and \E escapes in the selector regex matchers.
     <https://github.com/jhy/jsoup/pull/1536>
 

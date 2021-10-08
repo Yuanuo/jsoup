@@ -6,7 +6,6 @@ import org.jsoup.nodes.Document;
 import org.jsoup.parser.Parser;
 import org.jsoup.safety.Cleaner;
 import org.jsoup.safety.Safelist;
-import org.jsoup.safety.Whitelist;
 
 import javax.annotation.Nullable;
 import java.io.File;
@@ -49,8 +48,22 @@ public class Jsoup {
     }
 
     /**
-     Parse HTML into a Document. As no base URI is specified, absolute URL detection relies on the HTML including a
-     {@code <base href>} tag.
+     Parse HTML into a Document, using the provided Parser. You can provide an alternate parser, such as a simple XML
+     (non-HTML) parser.  As no base URI is specified, absolute URL resolution, if required, relies on the HTML including
+     a {@code <base href>} tag.
+
+     @param html    HTML to parse
+     before the HTML declares a {@code <base href>} tag.
+     @param parser alternate {@link Parser#xmlParser() parser} to use.
+     @return sane HTML
+     */
+    public static Document parse(String html, Parser parser) {
+        return parser.parseInput(html, "");
+    }
+
+    /**
+     Parse HTML into a Document. As no base URI is specified, absolute URL resolution, if required, relies on the HTML
+     including a {@code <base href>} tag.
 
      @param html HTML to parse
      @return sane HTML
@@ -251,22 +264,13 @@ Connection con3 = session.newRequest();
     }
 
     /**
-     Use {@link #clean(String, String, Safelist)} instead.
-     @deprecated as of 1.14.1.
-     */
-    @Deprecated
-    public static String clean(String bodyHtml, String baseUri, Whitelist safelist) {
-        return clean(bodyHtml, baseUri, (Safelist) safelist);
-    }
-
-    /**
      Get safe HTML from untrusted input HTML, by parsing input HTML and filtering it through a safe-list of permitted
      tags and attributes.
 
      <p>Note that as this method does not take a base href URL to resolve attributes with relative URLs against, those
      URLs will be removed, unless the input HTML contains a {@code <base href> tag}. If you wish to preserve those, use
      the {@link Jsoup#clean(String html, String baseHref, Safelist)} method instead, and enable
-     {@link Safelist#preserveRelativeLinks(boolean true)}.</p>
+     {@link Safelist#preserveRelativeLinks(boolean)}.</p>
 
      @param bodyHtml input untrusted HTML (body fragment)
      @param safelist list of permitted HTML elements
@@ -275,15 +279,6 @@ Connection con3 = session.newRequest();
      */
     public static String clean(String bodyHtml, Safelist safelist) {
         return clean(bodyHtml, "", safelist);
-    }
-
-    /**
-     Use {@link #clean(String, Safelist)} instead.
-     @deprecated as of 1.14.1.
-     */
-    @Deprecated
-    public static String clean(String bodyHtml, Whitelist safelist) {
-        return clean(bodyHtml, (Safelist) safelist);
     }
 
     /**
@@ -309,15 +304,6 @@ Connection con3 = session.newRequest();
     }
 
     /**
-     Use {@link #clean(String, String, Safelist, Document.OutputSettings)} instead.
-     @deprecated as of 1.14.1.
-     */
-    @Deprecated
-    public static String clean(String bodyHtml, String baseUri, Whitelist safelist, Document.OutputSettings outputSettings) {
-        return clean(bodyHtml, baseUri, (Safelist) safelist, outputSettings);
-    }
-
-    /**
      Test if the input body HTML has only tags and attributes allowed by the Safelist. Useful for form validation.
      <p>The input HTML should still be run through the cleaner to set up enforced attributes, and to tidy the output.
      <p>Assumes the HTML is a body fragment (i.e. will be used in an existing HTML document body.)
@@ -329,14 +315,4 @@ Connection con3 = session.newRequest();
     public static boolean isValid(String bodyHtml, Safelist safelist) {
         return new Cleaner(safelist).isValidBodyHtml(bodyHtml);
     }
-
-    /**
-     Use {@link #isValid(String, Safelist)} instead.
-     @deprecated as of 1.14.1.
-     */
-    @Deprecated
-    public static boolean isValid(String bodyHtml, Whitelist safelist) {
-        return isValid(bodyHtml, (Safelist) safelist);
-    }
-    
 }
