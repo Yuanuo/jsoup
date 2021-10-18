@@ -15,6 +15,7 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  The base, abstract Node model. Elements, Documents, Comments etc are all Node instances.
@@ -89,6 +90,17 @@ public abstract class Node implements Cloneable {
     public String attrOr(String attributeKey, String defaultValue) {
         final String attrVal = attr(attributeKey);
         return attrVal.isEmpty() ? defaultValue : attrVal;
+    }
+
+    /**
+     * @see #attr(String) but with defaultValue to instead empty string
+     * @param attributeKey The attribute key.
+     * @param defaultSupplier The default value if not present.
+     * @return The attribute, or default value if not present.
+     */
+    public String attrOr(String attributeKey, Supplier<String> defaultSupplier) {
+        final String attrVal = attr(attributeKey);
+        return attrVal.isEmpty() ? defaultSupplier.get() : attrVal;
     }
 
     /**
