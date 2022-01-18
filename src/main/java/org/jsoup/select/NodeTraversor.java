@@ -25,14 +25,15 @@ public class NodeTraversor {
         
         while (node != null) {
             Node parent = node.parentNode(); // remember parent to find nodes that get replaced in .head
-            int origSize = parent != null ? parent.childNodeSize() : 0;
             Node next = node.nextSibling();
+            int nodeIndex = node.siblingIndex();
 
             visitor.head(node, depth); // visit current node
             if (parent != null && !node.hasParent()) { // removed or replaced
-                if (origSize == parent.childNodeSize()) { // replaced
-                    node = parent.childNode(node.siblingIndex()); // replace ditches parent but keeps sibling index
-                } else { // removed
+                if (nodeIndex < parent.childNodeSize()) {
+                    node = parent.childNode(nodeIndex); // replace ditches parent but keeps sibling index
+                    continue;
+                } else {
                     node = next;
                     if (node == null) { // last one, go up
                         node = parent;
