@@ -1,7 +1,7 @@
 package org.jsoup.nodes;
 
-import org.jsoup.internal.StringUtil;
 import org.jsoup.helper.Validate;
+import org.jsoup.internal.StringUtil;
 
 import java.io.IOException;
 
@@ -80,21 +80,30 @@ public class TextNode extends LeafNode {
         return tailNode;
     }
 
-	void outerHtmlHead(Appendable accum, int depth, Document.OutputSettings out) throws IOException {
+    void outerHtmlHead(Appendable accum, int depth, Document.OutputSettings out) throws IOException {
         final boolean prettyPrint = out.prettyPrint();
         final Element parent = parentNode instanceof Element ? ((Element) parentNode) : null;
-        final boolean parentIndent = parent != null && parent.shouldIndent(out);
-        final boolean blank = isBlank();
-
-        if (parentIndent && StringUtil.startsWithNewline(coreValue()) && blank) // we are skippable whitespace
-            return;
-
-        if (prettyPrint && ((siblingIndex == 0 && parent != null && parent.tag().formatAsBlock() && !blank) || (out.outline() && siblingNodes().size()>0 && !blank) ))
-            indent(accum, depth, out);
-
         final boolean normaliseWhite = prettyPrint && !Element.preserveWhitespace(parentNode);
-        final boolean stripWhite = prettyPrint && parentNode instanceof Document;
-        Entities.escape(accum, coreValue(), out, false, normaliseWhite, stripWhite);
+
+        boolean trimLeading = false;
+        boolean trimTrailing = false;
+        if (normaliseWhite) {
+            trimLeading = (siblingIndex == 0 && parent != null && parent.tag().isBlock()) ||
+                parentNode instanceof Document;
+            trimTrailing = nextSibling() == null && parent != null && parent.tag().isBlock();
+
+            // if this text is just whitespace, and the next node will cause an indent, skip this text:
+            Node next = this.nextSibling();
+            boolean couldSkip = (next instanceof Element && ((Element) next).shouldIndent(out)) // next will indent
+                || (next instanceof TextNode && (((TextNode) next).isBlank())); // next is blank text, from re-parenting
+            if (couldSkip && isBlank()) return;
+
+            if ((siblingIndex == 0 && parent != null && parent.tag().formatAsBlock() && !isBlank()) ||
+                (out.outline() && siblingNodes().size() > 0 && !isBlank()))
+                indent(accum, depth, out);
+        }
+
+        Entities.escape(accum, coreValue(), out, false, normaliseWhite, trimLeading, trimTrailing);
     }
 
 	void outerHtmlTail(Appendable accum, int depth, Document.OutputSettings out) {}

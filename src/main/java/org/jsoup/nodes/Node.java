@@ -482,8 +482,7 @@ public abstract class Node implements Cloneable {
      */
     public @Nullable Node unwrap() {
         Validate.notNull(parentNode);
-        final List<Node> childNodes = ensureChildNodes();
-        Node firstChild = childNodes.size() > 0 ? childNodes.get(0) : null;
+        Node firstChild = firstChild();
         parentNode.addChildren(siblingIndex, this.childNodesAsArray());
         this.remove();
 
@@ -598,16 +597,16 @@ public abstract class Node implements Cloneable {
     }
 
     private void reindexChildren(int start) {
-        if (childNodeSize() == 0) return;
+        final int size = childNodeSize();
+        if (size == 0) return;
         final List<Node> childNodes = ensureChildNodes();
-
-        for (int i = start; i < childNodes.size(); i++) {
+        for (int i = start; i < size; i++) {
             childNodes.get(i).setSiblingIndex(i);
         }
     }
 
     /**
-     Retrieves this node's sibling nodes. Similar to {@link #childNodes()  node.parent.childNodes()}, but does not
+     Retrieves this node's sibling nodes. Similar to {@link #childNodes() node.parent.childNodes()}, but does not
      include this node (a node is not a sibling of itself).
      @return node siblings. If the node has no parent, returns an empty list.
      */
@@ -665,6 +664,33 @@ public abstract class Node implements Cloneable {
 
     protected void setSiblingIndex(int siblingIndex) {
         this.siblingIndex = siblingIndex;
+    }
+
+    /**
+     Gets the first child node of this node, or {@code null} if there is none. This could be any Node type, such as an
+     Element, TextNode, Comment, etc. Use {@link Element#firstElementChild()} to get the first Element child.
+     @return the first child node, or null if there are no children.
+     @see Element#firstElementChild()
+     @see #lastChild()
+     @since 1.15.2
+     */
+    public @Nullable Node firstChild() {
+        if (childNodeSize() == 0) return null;
+        return ensureChildNodes().get(0);
+    }
+
+    /**
+     Gets the last child node of this node, or {@code null} if there is none.
+     @return the last child node, or null if there are no children.
+     @see Element#lastElementChild()
+     @see #firstChild()
+     @since 1.15.2
+     */
+    public @Nullable Node lastChild() {
+        final int size = childNodeSize();
+        if (size == 0) return null;
+        List<Node> children = ensureChildNodes();
+        return children.get(size - 1);
     }
 
     /**
@@ -736,6 +762,18 @@ public abstract class Node implements Cloneable {
     public <T extends Appendable> T html(T appendable) {
         outerHtml(appendable);
         return appendable;
+    }
+
+    /**
+     Get the source range (start and end positions) in the original input source that this node was parsed from. Position
+     tracking must be enabled prior to parsing the content. For an Element, this will be the positions of the start tag.
+     @return the range for the start of the node.
+     @see org.jsoup.parser.Parser#setTrackPosition(boolean)
+     @see Element#endSourceRange()
+     @since 1.15.2
+     */
+    public Range sourceRange() {
+        return Range.of(this, true);
     }
 
     /**

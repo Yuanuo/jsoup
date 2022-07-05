@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -536,7 +537,7 @@ public class ElementTest {
         Document doc = Jsoup.parse("<title>Hello there</title> <div><p>Hello</p><p>there</p></div> <div>Another</div>");
         assertEquals("<title>Hello there</title>", doc.select("title").first().outerHtml());
         assertEquals("<div>\n <p>Hello</p>\n <p>there</p>\n</div>", doc.select("div").first().outerHtml());
-        assertEquals("<div>\n <p>Hello</p>\n <p>there</p>\n</div> \n<div>\n Another\n</div>", doc.select("body").first().html());
+        assertEquals("<div>\n <p>Hello</p>\n <p>there</p>\n</div>\n<div>\n Another\n</div>", doc.select("body").first().html());
     }
 
     @Test
@@ -625,6 +626,7 @@ public class ElementTest {
         Document doc = Jsoup.parse("<div id=1><p>Hello</p></div>");
         Element div = doc.getElementById("1");
         div.appendText(" there & now >");
+        assertEquals ("Hello there & now >", div.text());
         assertEquals("<p>Hello</p> there &amp; now &gt;", TextUtil.stripNewlines(div.html()));
     }
 
@@ -2215,5 +2217,121 @@ public class ElementTest {
         assertEquals(html, p.outerHtml());
         assertEquals("Hello World", p.text());
         assertEquals("Hello\nWorld", p.wholeText());
+    }
+
+    @Test void preformatFlowsToChildTextNodes() {
+        // https://github.com/jhy/jsoup/issues/1776
+        String html = "<div><pre>One\n<span>\nTwo</span>\n <span>  \nThree</span>\n <span>Four <span>Five</span>\n  Six\n</pre>";
+        Document doc = Jsoup.parse(html);
+        doc.outputSettings().indentAmount(2).prettyPrint(true);
+
+        Element div = doc.selectFirst("div");
+        assertNotNull(div);
+        String actual = div.outerHtml();
+        String expect = "<div>\n" +
+            "  <pre>One\n" +
+            "<span>\n" +
+            "Two</span>\n" +
+            " <span>  \n" +
+            "Three</span>\n" +
+            " <span>Four <span>Five</span>\n" +
+            "  Six\n" +
+            "</span></pre>\n" +
+            "</div>";
+        assertEquals(expect, actual);
+
+        String expectText = "One\n" +
+            "\n" +
+            "Two\n" +
+            "   \n" +
+            "Three\n" +
+            " Four Five\n" +
+            "  Six\n";
+        assertEquals(expectText, div.wholeText());
+
+        String expectOwn = "One\n" +
+            "\n" +
+            " \n" +
+            " ";
+        assertEquals(expectOwn, div.child(0).wholeOwnText());
+    }
+
+    @Test void testExpectFirst() {
+        Document doc = Jsoup.parse("<p>One</p><p>Two <span>Three</span> <span>Four</span>");
+
+        Element span = doc.expectFirst("span");
+        assertEquals("Three", span.text());
+
+        assertNull(doc.selectFirst("div"));
+        boolean threw = false;
+        try {
+            Element div = doc.expectFirst("div");
+        } catch (IllegalArgumentException e) {
+            threw = true;
+        }
+        assertTrue(threw);
+    }
+
+    @Test void spanRunsMaintainSpace() {
+        // https://github.com/jhy/jsoup/issues/1787
+        Document doc = Jsoup.parse("<p><span>One</span>\n<span>Two</span>\n<span>Three</span></p>");
+        String text = "One Two Three";
+        Element body = doc.body();
+        assertEquals(text, body.text());
+
+        Element p = doc.expectFirst("p");
+        String html = p.html();
+        p.html(html);
+        assertEquals(text, body.text());
+
+        assertEquals("<p><span>One</span> <span>Two</span> <span>Three</span></p>", body.html());
+    }
+
+    @Test void doctypeIsPrettyPrinted() {
+        // resolves underlying issue raised in https://github.com/jhy/jsoup/pull/1664
+        Document doc1 = Jsoup.parse("<!--\nlicense\n-->\n \n<!doctype html>\n<html>");
+        Document doc2 = Jsoup.parse("\n  <!doctype html><html>");
+        Document doc3 = Jsoup.parse("<!doctype html>\n<html>");
+        Document doc4 = Jsoup.parse("\n<!doctype html>\n<html>");
+        Document doc5 = Jsoup.parse("\n<!--\n comment \n -->  <!doctype html>\n<html>");
+        Document doc6 = Jsoup.parse("<!--\n comment \n -->  <!doctype html>\n<html>");
+
+        assertEquals("<!--\nlicense\n-->\n<!doctype html>\n<html>\n <head></head>\n <body></body>\n</html>", doc1.html());
+        doc1.outputSettings().prettyPrint(false);
+        assertEquals("<!--\nlicense\n--><!doctype html>\n<html><head></head><body></body></html>", doc1.html());
+        // note that the whitespace between the comment and the doctype is not retained, in Initial state
+
+        assertEquals("<!doctype html>\n<html>\n <head></head>\n <body></body>\n</html>", doc2.html());
+        assertEquals("<!doctype html>\n<html>\n <head></head>\n <body></body>\n</html>", doc3.html());
+        assertEquals("<!doctype html>\n<html>\n <head></head>\n <body></body>\n</html>", doc4.html());
+        assertEquals("<!--\n comment \n -->\n<!doctype html>\n<html>\n <head></head>\n <body></body>\n</html>", doc5.html());
+        assertEquals("<!--\n comment \n -->\n<!doctype html>\n<html>\n <head></head>\n <body></body>\n</html>", doc6.html());
+    }
+
+    @Test void textnodeInBlockIndent() {
+        String html ="<div>\n{{ msg }} \n </div>\n<div>\n{{ msg }} \n </div>";
+        Document doc = Jsoup.parse(html);
+        assertEquals("<div>\n {{ msg }}\n</div>\n<div>\n {{ msg }}\n</div>", doc.body().html());
+    }
+
+    @Test void stripTrailing() {
+        String html = "<p> This <span>is </span>fine. </p>";
+        Document doc = Jsoup.parse(html);
+        assertEquals("<p>This <span>is </span>fine.</p>", doc.body().html());
+    }
+
+    @Test void elementIndentAndSpaceTrims() {
+        String html = "<body><div> <p> One Two </p> <a>  Hello </a><p>\nSome text \n</p>\n </div>";
+        Document doc = Jsoup.parse(html);
+        assertEquals("<div>\n" +
+            " <p>One Two</p> <a> Hello </a>\n" +
+            " <p>Some text</p>\n" +
+            "</div>", doc.body().html());
+    }
+
+    @Test void divAInlineable() {
+        String html = "<body><div> <a>Text</a>";
+        Document doc = Jsoup.parse(html);
+        assertEquals("<div><a>Text</a>\n</div>", doc.body().html());
     }
 }

@@ -77,7 +77,7 @@ public class HtmlTreeBuilderStateTest {
             " <head></head>\n" +
             " <body><a href=\"#1\"> </a>\n" +
             "  <div>\n" +
-            "   <a href=\"#1\"></a><a href=\"#2\">child</a>\n" +
+            "   <a href=\"#1\"> </a><a href=\"#2\">child</a>\n" +
             "  </div>\n" +
             " </body>\n" +
             "</html>", s);
@@ -101,9 +101,9 @@ public class HtmlTreeBuilderStateTest {
             " <head></head>\n" +
             " <body><a href=\"#1\"> </a>\n" +
             "  <div>\n" +
-            "   <a href=\"#1\"></a>\n" +
+            "   <a href=\"#1\"> </a>\n" +
             "   <div>\n" +
-            "    <a href=\"#1\"></a><a href=\"#2\">child</a>\n" +
+            "    <a href=\"#1\"> </a><a href=\"#2\">child</a>\n" +
             "   </div>\n" +
             "  </div>\n" +
             " </body>\n" +

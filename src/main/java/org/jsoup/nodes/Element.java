@@ -441,6 +441,7 @@ public class Element extends Node {
      * <p>Also known as {@code querySelector()} in the Web DOM.</p>
      * @param cssQuery cssQuery a {@link Selector} CSS-like query
      * @return the first matching element, or <b>{@code null}</b> if there is no match.
+     * @see #expectFirst(String)
      */
     public @Nullable Element selectFirst(String cssQuery) {
         return Selector.selectFirst(cssQuery, this);
@@ -452,10 +453,22 @@ public class Element extends Node {
      *
      * @param evaluator an element evaluator
      * @return the first matching element (walking down the tree, starting from this element), or {@code null} if none
-     *     matchn.
+     * match.
      */
     public @Nullable Element selectFirst(Evaluator evaluator) {
         return Collector.findFirst(evaluator, this);
+    }
+
+    /**
+     Just like {@link #selectFirst(String)}, but if there is no match, throws an {@link IllegalArgumentException}. This
+     is useful if you want to simply abort processing on a failed match.
+     @param cssQuery a {@link Selector} CSS-like query
+     @return the first matching element
+     @throws IllegalArgumentException if no match is found
+     @since 1.15.2
+     */
+    public Element expectFirst(String cssQuery) {
+        return (Element) Validate.ensureNotNull(Selector.selectFirst(cssQuery, this));
     }
 
     /**
@@ -510,6 +523,8 @@ public class Element extends Node {
 
     /**
      Find Elements that match the supplied XPath expression.
+     <p>Note that for convenience of writing the Xpath expression, namespaces are disabled, and queries can be
+     expressed using the element's local name only.</p>
      <p>By default, XPath 1.0 expressions are supported. If you would to use XPath 2.0 or higher, you can provide an
      alternate XPathFactory implementation:</p>
      <ol>
@@ -959,6 +974,42 @@ public class Element extends Node {
                 return i;
         }
         return 0;
+    }
+
+    /**
+     Gets the first child of this Element that is an Element, or {@code null} if there is none.
+     @return the first Element child node, or null.
+     @see #firstChild()
+     @see #lastElementChild()
+     @since 1.15.2
+     */
+    public @Nullable Element firstElementChild() {
+        final int size = childNodeSize();
+        if (size == 0) return null;
+        List<Node> children = ensureChildNodes();
+        for (int i = 0; i < size; i++) {
+            Node node = children.get(i);
+            if (node instanceof Element) return (Element) node;
+        }
+        return null;
+    }
+
+    /**
+     Gets the last child of this Element that is an Element, or @{code null} if there is none.
+     @return the last Element child node, or null.
+     @see #lastChild()
+     @see #firstElementChild()
+     @since 1.15.2
+     */
+    public @Nullable Element lastElementChild() {
+        final int size = childNodeSize();
+        if (size == 0) return null;
+        List<Node> children = ensureChildNodes();
+        for (int i = size -1; i >= 0; i--) {
+            Node node = children.get(i);
+            if (node instanceof Element) return (Element) node;
+        }
+        return null;
     }
 
     // DOM type methods
@@ -1617,6 +1668,19 @@ public class Element extends Node {
         return this;
     }
 
+    /**
+     Get the source range (start and end positions) of the end (closing) tag for this Element. Position tracking must be
+     enabled prior to parsing the content.
+     @return the range of the closing tag for this element, if it was explicitly closed in the source. {@code Untracked}
+     otherwise.
+     @see org.jsoup.parser.Parser#setTrackPosition(boolean)
+     @see Node#sourceRange()
+     @since 1.15.2
+     */
+    public Range endSourceRange() {
+        return Range.of(this, false);
+    }
+
     boolean shouldIndent(final Document.OutputSettings out) {
         return out.prettyPrint() && isFormatAsBlock(out) && !isInlineable(out);
     }
@@ -1781,7 +1845,6 @@ public class Element extends Node {
 
     private boolean isInlineable(Document.OutputSettings out) {
         return tag().isInline()
-            && !tag().isEmpty()
             && (parent() == null || parent().isBlock())
             && previousSibling() != null
             && !out.outline();
