@@ -59,7 +59,7 @@ public class Element extends Node {
     }
 
     /**
-     * Create a new, standalone Element. (Standalone in that is has no parent.)
+     * Create a new, standalone Element. (Standalone in that it has no parent.)
      *
      * @param tag tag of this element
      * @param baseUri the base URI (optional, may be null to inherit from parent, or "" to clear parent's)
@@ -172,7 +172,7 @@ public class Element extends Node {
      * @see Elements#tagName(String)
      */
     public Element tagName(String tagName) {
-        Validate.notEmpty(tagName, "Tag name must not be empty.");
+        Validate.notEmptyParam(tagName, "tagName");
         tag = Tag.valueOf(tagName, NodeUtils.parser(this).settings()); // maintains the case option of the original parse
         return this;
     }
@@ -468,7 +468,13 @@ public class Element extends Node {
      @since 1.15.2
      */
     public Element expectFirst(String cssQuery) {
-        return (Element) Validate.ensureNotNull(Selector.selectFirst(cssQuery, this));
+        return (Element) Validate.ensureNotNull(
+            Selector.selectFirst(cssQuery, this),
+            parent() != null ?
+                "No elements matched the query '%s' on element '%s'.":
+                "No elements matched the query '%s' in the document."
+            , cssQuery, this.tagName()
+        );
     }
 
     /**
@@ -1079,7 +1085,7 @@ public class Element extends Node {
      * Find elements that have an attribute name starting with the supplied prefix. Use {@code data-} to find elements
      * that have HTML5 datasets.
      * @param keyPrefix name prefix of the attribute e.g. {@code data-}
-     * @return elements that have attribute names that start with with the prefix, empty if none.
+     * @return elements that have attribute names that start with the prefix, empty if none.
      */
     public Elements getElementsByAttributeStarting(String keyPrefix) {
         Validate.notEmpty(keyPrefix);
