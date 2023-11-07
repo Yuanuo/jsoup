@@ -5,6 +5,7 @@ import org.jsoup.helper.Validate;
 import org.jsoup.internal.NonnullByDefault;
 import org.jsoup.internal.StringUtil;
 import org.jsoup.parser.ParseSettings;
+import org.jsoup.parser.Parser;
 import org.jsoup.parser.Tag;
 import org.jsoup.select.Collector;
 import org.jsoup.select.Elements;
@@ -51,11 +52,21 @@ public class Element extends Node {
     @Nullable Attributes attributes; // field is nullable but all methods for attributes are non-null
 
     /**
-     * Create a new, standalone element.
+     * Create a new, standalone element, in the specified namespace.
      * @param tag tag name
+     * @param namespace namespace for this element
+     */
+    public Element(String tag, String namespace) {
+        this(Tag.valueOf(tag, namespace, ParseSettings.preserveCase), null);
+    }
+
+    /**
+     * Create a new, standalone element, in the HTML namespace.
+     * @param tag tag name
+     * @see #Element(String tag, String namespace)
      */
     public Element(String tag) {
-        this(Tag.valueOf(tag), "", null);
+        this(Tag.valueOf(tag, Parser.NamespaceHtml, ParseSettings.preserveCase), "", null);
     }
 
     /**
@@ -172,8 +183,22 @@ public class Element extends Node {
      * @see Elements#tagName(String)
      */
     public Element tagName(String tagName) {
+        return tagName(tagName, tag.namespace());
+    }
+
+    /**
+     * Change (rename) the tag of this element. For example, convert a {@code <span>} to a {@code <div>} with
+     * {@code el.tagName("div");}.
+     *
+     * @param tagName new tag name for this element
+     * @param namespace the new namespace for this element
+     * @return this element, for chaining
+     * @see Elements#tagName(String)
+     */
+    public Element tagName(String tagName, String namespace) {
         Validate.notEmptyParam(tagName, "tagName");
-        tag = Tag.valueOf(tagName, NodeUtils.parser(this).settings()); // maintains the case option of the original parse
+        Validate.notEmptyParam(namespace, "namespace");
+        tag = Tag.valueOf(tagName, namespace, NodeUtils.parser(this).settings()); // maintains the case option of the original parse
         return this;
     }
 
@@ -679,7 +704,11 @@ public class Element extends Node {
      *  {@code parent.appendElement("h1").attr("id", "header").text("Welcome");}
      */
     public Element appendElement(String tagName) {
-        Element child = new Element(Tag.valueOf(tagName, NodeUtils.parser(this).settings()), baseUri());
+        return appendElement(tagName, tag.namespace());
+    }
+
+    public Element appendElement(String tagName, String namespace) {
+        Element child = new Element(Tag.valueOf(tagName, namespace, NodeUtils.parser(this).settings()), baseUri());
         appendChild(child);
         return child;
     }
@@ -692,7 +721,11 @@ public class Element extends Node {
      *  {@code parent.prependElement("h1").attr("id", "header").text("Welcome");}
      */
     public Element prependElement(String tagName) {
-        Element child = new Element(Tag.valueOf(tagName, NodeUtils.parser(this).settings()), baseUri());
+        return prependElement(tagName, tag.namespace());
+    }
+
+    public Element prependElement(String tagName, String namespace) {
+        Element child = new Element(Tag.valueOf(tagName, namespace, NodeUtils.parser(this).settings()), baseUri());
         prependChild(child);
         return child;
     }
@@ -796,11 +829,16 @@ public class Element extends Node {
     }
 
     /**
-     * Remove all the element's child nodes. Any attributes are left as-is.
+     * Remove all the element's child nodes. Any attributes are left as-is. Each child node has its parent set to
+     * {@code null}.
      * @return this element
      */
     @Override
     public Element empty() {
+        // Detach each of the children -> parent links:
+        for (Node child : childNodes) {
+            child.parentNode = null;
+        }
         childNodes.clear();
         return this;
     }
@@ -840,6 +878,16 @@ public class Element extends Node {
             }
         }
 
+        StringBuilder selector = StringUtil.borrowBuilder();
+        Element el = this;
+        while (el != null && !(el instanceof Document)) {
+            selector.insert(0, el.cssSelectorComponent());
+            el = el.parent();
+        }
+        return StringUtil.releaseBuilder(selector);
+    }
+
+    private String cssSelectorComponent() {
         // Escape tagname, and translate HTML namespace ns:tag to CSS namespace syntax ns|tag
         String tagName = escapeCssIdentifier(tagName()).replace("\\:", "|");
         StringBuilder selector = StringUtil.borrowBuilder().append(tagName);
@@ -859,7 +907,7 @@ public class Element extends Node {
             selector.append(String.format(
                 ":nth-child(%d)", elementSiblingIndex() + 1));
 
-        return parent().cssSelector() + StringUtil.releaseBuilder(selector);
+        return StringUtil.releaseBuilder(selector);
     }
 
     /**
@@ -1296,33 +1344,40 @@ public class Element extends Node {
      */
     public String text() {
         final StringBuilder accum = StringUtil.borrowBuilder();
-        NodeTraversor.traverse(new NodeVisitor() {
-            public void head(Node node, int depth) {
-                if (node instanceof TextNode) {
-                    TextNode textNode = (TextNode) node;
-                    appendNormalisedText(accum, textNode);
-                } else if (node instanceof Element) {
-                    Element element = (Element) node;
-                    if (accum.length() > 0 &&
-                        (element.isBlock() || element.isNode("br")) &&
-                        !lastCharIsWhitespace(accum))
-                        accum.append(' ');
-                }
-            }
-
-            public void tail(Node node, int depth) {
-                // make sure there is a space between block tags and immediately following text nodes or inline elements <div>One</div>Two should be "One Two".
-                if (node instanceof Element) {
-                    Element element = (Element) node;
-                    Node next = node.nextSibling();
-                    if (element.isBlock() && (next instanceof TextNode || next instanceof Element && !((Element) next).tag.formatAsBlock()) && !lastCharIsWhitespace(accum))
-                        accum.append(' ');
-                }
-
-            }
-        }, this);
-
+        NodeTraversor.traverse(new TextAccumulator(accum), this);
         return StringUtil.releaseBuilder(accum).trim();
+    }
+
+    private static class TextAccumulator implements NodeVisitor {
+        private final StringBuilder accum;
+
+        public TextAccumulator(StringBuilder accum) {
+            this.accum = accum;
+        }
+
+        public void head(Node node, int depth) {
+            if (node instanceof TextNode) {
+                TextNode textNode = (TextNode) node;
+                appendNormalisedText(accum, textNode);
+            } else if (node instanceof Element) {
+                Element element = (Element) node;
+                if (accum.length() > 0 &&
+                    (element.isBlock() || element.isNode("br")) &&
+                    !lastCharIsWhitespace(accum))
+                    accum.append(' ');
+            }
+        }
+
+        public void tail(Node node, int depth) {
+            // make sure there is a space between block tags and immediately following text nodes or inline elements <div>One</div>Two should be "One Two".
+            if (node instanceof Element) {
+                Element element = (Element) node;
+                Node next = node.nextSibling();
+                if (element.isBlock() && (next instanceof TextNode || next instanceof Element && !((Element) next).tag.formatAsBlock()) && !lastCharIsWhitespace(accum))
+                    accum.append(' ');
+            }
+
+        }
     }
 
     /**

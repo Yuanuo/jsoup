@@ -2566,6 +2566,30 @@ public class ElementTest {
         assertEquals("div", el.cssSelector());
     }
 
+    @Test void cssSelectorDoesntStackOverflow() {
+        // https://github.com/jhy/jsoup/issues/2001
+        Element element = new Element("element");
+        Element root = element;
+
+        // Create a long chain of elements
+        for (int i = 0; i < 5000; i++) {
+            Element elem2 = new Element("element" + i);
+            element.appendChild(elem2);
+            element = elem2;
+        }
+
+        String selector = element.cssSelector(); // would overflow in cssSelector parent() recurse
+        Evaluator eval = QueryParser.parse(selector);
+
+        assertEquals(eval.toString(), selector);
+        assertTrue(selector.startsWith("element > element0 >"));
+        assertTrue(selector.endsWith("8 > element4999"));
+
+        Elements elements = root.select(selector); // would overflow in nested And ImmediateParent chain eval
+        assertEquals(1, elements.size());
+        assertEquals(element, elements.first());
+    }
+
     @Test void orphanSiblings() {
         Element el = new Element("div");
         assertEquals(0, el.siblingElements().size());
@@ -2709,6 +2733,28 @@ public class ElementTest {
         assertEquals("Hello", parse.data());
     }
 
+    @Test void datanodesOutputCdataInXhtml() {
+        String html = "<p><script>1 && 2</script><style>3 && 4</style> 5 &amp;&amp; 6</p>";
+        Document doc = Jsoup.parse(html); // parsed as HTML
+        String out = TextUtil.normalizeSpaces(doc.body().html());
+        assertEquals(html, out);
+        Element scriptEl = doc.expectFirst("script");
+        DataNode scriptDataNode = (DataNode) scriptEl.childNode(0);
+        assertEquals("1 && 2", scriptDataNode.getWholeData());
+
+        doc.outputSettings().syntax(Document.OutputSettings.Syntax.xml);
+        String xml = doc.body().html();
+        assertEquals(
+            "<p><script><![CDATA[1 && 2]]></script><style><![CDATA[3 && 4]]></style> 5 &amp;&amp; 6</p>",
+            TextUtil.normalizeSpaces(xml));
+
+        Document xmlDoc = Jsoup.parse(xml, Parser.xmlParser());
+        assertEquals(xml, xmlDoc.html());
+        Element scriptXmlEl = xmlDoc.expectFirst("script");
+        CDataNode scriptCdata = (CDataNode) scriptXmlEl.childNode(0);
+        assertEquals(scriptCdata.text(), scriptDataNode.getWholeData());
+    }
+
     @Test void outerHtmlAppendable() {
         // tests not string builder flow
         Document doc = Jsoup.parse("<div>One</div>");
@@ -2748,5 +2794,63 @@ public class ElementTest {
             " </tbody>\n" +
             "</table>", out);
         // todo - I would prefer the </td> to wrap down there - but need to reimplement pretty printer to simplify and track indented state
+    }
+
+    @Test void emptyDetachesChildren() {
+        String html = "<div><p>One<p>Two</p>Three</div>";
+        Document doc = Jsoup.parse(html);
+        Element div = doc.expectFirst("div");
+        assertEquals(3, div.childNodeSize());
+
+        List<Node> childNodes = div.childNodes();
+
+        div.empty();
+        assertEquals(0, div.childNodeSize());
+        assertEquals(3, childNodes.size()); // copied before removing
+        for (Node childNode : childNodes) {
+            assertNull(childNode.parentNode);
+        }
+
+        Element p = (Element) childNodes.get(0);
+        assertEquals(p, p.childNode(0).parentNode()); // TextNode "One" still has parent p, as detachment is only on div element
+    }
+
+    @Test void emptyAndAddPreviousChild() {
+        String html = "<div><p>One<p>Two<p>Three</div>";
+        Document doc = Jsoup.parse(html);
+        Element div = doc.expectFirst("div");
+        Element p = div.expectFirst("p");
+        div
+            .empty()
+            .appendChild(p);
+
+        assertEquals("<p>One</p>", div.html());
+    }
+
+    @Test void emptyAndAddPreviousDescendant() {
+        String html = "<header><div><p>One<p>Two<p>Three</div></header>";
+        Document doc = Jsoup.parse(html);
+        Element header = doc.expectFirst("header");
+        Element p = header.expectFirst("p");
+        header
+            .empty()
+            .appendChild(p);
+
+        assertEquals("<p>One</p>", header.html());
+    }
+
+    @Test void xmlSyntaxSetsEscapeMode() {
+        String html = "Foo&nbsp;&Succeeds;";
+        Document doc = Jsoup.parse(html);
+        doc.outputSettings().charset("ascii"); // so we can see the zws
+        assertEquals("Foo&nbsp;&#x227b;", doc.body().html());
+
+        doc.outputSettings().syntax(Document.OutputSettings.Syntax.xml);
+        String out = doc.body().html();
+        assertEquals("Foo&#xa0;&#x227b;", out);
+
+        // can set back if desired
+        doc.outputSettings().escapeMode(Entities.EscapeMode.extended);
+        assertEquals("Foo&nbsp;&succ;", doc.body().html()); // succ is alias for Succeeds, and first hit in entities
     }
 }

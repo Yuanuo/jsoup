@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static org.jsoup.select.StructuralEvaluator.ImmediateParentRun;
 import static org.jsoup.internal.Normalizer.normalize;
 
 /**
@@ -107,7 +108,10 @@ public class QueryParser {
         // for most combinators: change the current eval into an AND of the current eval and the new eval
         switch (combinator) {
             case '>':
-                currentEval = new CombiningEvaluator.And(new StructuralEvaluator.ImmediateParent(currentEval), newEval);
+                ImmediateParentRun run = currentEval instanceof ImmediateParentRun ?
+                        (ImmediateParentRun) currentEval : new ImmediateParentRun(currentEval);
+                run.add(newEval);
+                currentEval = run;
                 break;
             case ' ':
                 currentEval = new CombiningEvaluator.And(new StructuralEvaluator.Parent(currentEval), newEval);
@@ -141,18 +145,21 @@ public class QueryParser {
 
     private String consumeSubQuery() {
         StringBuilder sq = StringUtil.borrowBuilder();
+        boolean seenNonCombinator = false; // eat until we hit a combinator after eating something else
         while (!tq.isEmpty()) {
             if (tq.matches("("))
                 sq.append("(").append(tq.chompBalanced('(', ')')).append(")");
             else if (tq.matches("["))
                 sq.append("[").append(tq.chompBalanced('[', ']')).append("]");
             else if (tq.matchesAny(Combinators))
-                if (sq.length() > 0)
+                if (seenNonCombinator)
                     break;
                 else
-                    tq.consume();
-            else
+                    sq.append(tq.consume());
+            else {
+                seenNonCombinator = true;
                 sq.append(tq.consume());
+            }
         }
         return StringUtil.releaseBuilder(sq);
     }
@@ -185,6 +192,8 @@ public class QueryParser {
                 return new Evaluator.IndexEquals(consumeIndex());
             case "has":
                 return has();
+            case "is":
+                return is();
             case "contains":
                 return contains(false);
             case "containsOwn":
@@ -359,6 +368,13 @@ public class QueryParser {
         String subQuery = consumeParens();
         Validate.notEmpty(subQuery, ":has(selector) sub-select must not be empty");
         return new StructuralEvaluator.Has(parse(subQuery));
+    }
+
+    // psuedo selector :is()
+    private Evaluator is() {
+        String subQuery = consumeParens();
+        Validate.notEmpty(subQuery, ":is(selector) sub-select must not be empty");
+        return new StructuralEvaluator.Is(parse(subQuery));
     }
 
     // pseudo selector :contains(text), containsOwn(text)

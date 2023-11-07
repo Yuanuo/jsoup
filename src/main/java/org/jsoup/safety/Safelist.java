@@ -248,6 +248,8 @@ public class Safelist {
 
         for (String tagName : tags) {
             Validate.notEmpty(tagName);
+            Validate.isFalse(tagName.equalsIgnoreCase("noscript"),
+                "noscript is unsupported in Safelists, due to incompatibilities between parsers with and without script-mode enabled");
             tagNames.add(TagName.valueOf(tagName));
         }
         return this;
@@ -520,22 +522,22 @@ public class Safelist {
     }
 
     /**
-     * Test if the supplied tag is allowed by this safelist
+     * Test if the supplied tag is allowed by this safelist.
      * @param tag test tag
      * @return true if allowed
      */
-    protected boolean isSafeTag(String tag) {
+    public boolean isSafeTag(String tag) {
         return tagNames.contains(TagName.valueOf(tag));
     }
 
     /**
-     * Test if the supplied attribute is allowed by this safelist for this tag
+     * Test if the supplied attribute is allowed by this safelist for this tag.
      * @param tagName tag to consider allowing the attribute in
      * @param el element under test, to confirm protocol
      * @param attr attribute under test
      * @return true if allowed
      */
-    protected boolean isSafeAttribute(String tagName, Element el, Attribute attr) {
+    public boolean isSafeAttribute(String tagName, Element el, Attribute attr) {
         TagName tag = TagName.valueOf(tagName);
         AttributeKey key = AttributeKey.valueOf(attr.getKey());
 
@@ -595,7 +597,12 @@ public class Safelist {
         return value.startsWith("#") && !value.matches(".*\\s.*");
     }
 
-    Attributes getEnforcedAttributes(String tagName) {
+    /**
+     Gets the Attributes that should be enforced for a given tag
+     * @param tagName the tag
+     * @return the attributes that will be enforced; empty if none are set for the given tag
+     */
+    public Attributes getEnforcedAttributes(String tagName) {
         Attributes attrs = new Attributes();
         TagName tag = TagName.valueOf(tagName);
         if (enforcedAttributes.containsKey(tag)) {

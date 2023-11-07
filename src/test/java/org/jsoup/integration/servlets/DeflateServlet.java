@@ -9,11 +9,17 @@ import java.nio.charset.StandardCharsets;
 import java.util.zip.Deflater;
 import java.util.zip.DeflaterOutputStream;
 
-public class Deflateservlet extends BaseServlet {
-    public static final String Url = TestServer.map(Deflateservlet.class);
+public class DeflateServlet extends BaseServlet {
+    public static final String Url;
+    public static final String TlsUrl;
+    static {
+        TestServer.ServletUrls urls = TestServer.map(DeflateServlet.class);
+        Url = urls.url;
+        TlsUrl = urls.tlsUrl;
+    }
 
     @Override
-    protected void doGet(HttpServletRequest req, HttpServletResponse res) throws IOException {
+    protected void doIt(HttpServletRequest req, HttpServletResponse res) throws IOException {
         res.setContentType(TextHtml);
         res.setStatus(HttpServletResponse.SC_OK);
         res.setHeader("Content-Encoding", "deflate");

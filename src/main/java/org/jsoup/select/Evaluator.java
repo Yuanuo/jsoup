@@ -1,7 +1,6 @@
 package org.jsoup.select;
 
 import org.jsoup.helper.Validate;
-import org.jsoup.internal.StringUtil;
 import org.jsoup.nodes.Comment;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.DocumentType;
@@ -10,6 +9,7 @@ import org.jsoup.nodes.Node;
 import org.jsoup.nodes.PseudoTextElement;
 import org.jsoup.nodes.TextNode;
 import org.jsoup.nodes.XmlDeclaration;
+import org.jsoup.parser.ParseSettings;
 
 import java.util.List;
 import java.util.regex.Matcher;
@@ -710,7 +710,10 @@ public abstract class Evaluator {
 		public boolean matches(Element root, Element element) {
         	List<Node> family = element.childNodes();
             for (Node n : family) {
-                if (!(n instanceof Comment || n instanceof XmlDeclaration || n instanceof DocumentType)) return false;
+                if (n instanceof TextNode)
+                    return ((TextNode)n).isBlank();
+                if (!(n instanceof Comment || n instanceof XmlDeclaration || n instanceof DocumentType))
+                    return false;
             }
         	return true;
 		}
@@ -966,7 +969,7 @@ public abstract class Evaluator {
             List<TextNode> textNodes = element.textNodes();
             for (TextNode textNode : textNodes) {
                 PseudoTextElement pel = new PseudoTextElement(
-                    org.jsoup.parser.Tag.valueOf(element.tagName()), element.baseUri(), element.attributes());
+                    org.jsoup.parser.Tag.valueOf(element.tagName(), element.tag().namespace(), ParseSettings.preserveCase), element.baseUri(), element.attributes());
                 textNode.replaceWith(pel);
                 pel.appendChild(textNode);
             }
