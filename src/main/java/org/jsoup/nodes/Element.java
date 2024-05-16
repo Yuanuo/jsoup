@@ -2,11 +2,11 @@ package org.jsoup.nodes;
 
 import org.jsoup.helper.ChangeNotifyingArrayList;
 import org.jsoup.helper.Validate;
-import org.jsoup.internal.NonnullByDefault;
 import org.jsoup.internal.StringUtil;
 import org.jsoup.parser.ParseSettings;
 import org.jsoup.parser.Parser;
 import org.jsoup.parser.Tag;
+import org.jsoup.parser.TokenQueue;
 import org.jsoup.select.Collector;
 import org.jsoup.select.Elements;
 import org.jsoup.select.Evaluator;
@@ -15,8 +15,8 @@ import org.jsoup.select.NodeTraversor;
 import org.jsoup.select.NodeVisitor;
 import org.jsoup.select.QueryParser;
 import org.jsoup.select.Selector;
+import org.jspecify.annotations.Nullable;
 
-import javax.annotation.Nullable;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -31,9 +31,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.jsoup.internal.Normalizer.normalize;
 import static org.jsoup.nodes.TextNode.lastCharIsWhitespace;
+import static org.jsoup.parser.Parser.NamespaceHtml;
 import static org.jsoup.parser.TokenQueue.escapeCssIdentifier;
 
 /**
@@ -41,7 +44,6 @@ import static org.jsoup.parser.TokenQueue.escapeCssIdentifier;
  <p>
  From an Element, you can extract data, traverse the node graph, and manipulate the HTML.
 */
-@NonnullByDefault
 public class Element extends Node {
     private static final List<Element> EmptyChildren = Collections.emptyList();
     private static final Pattern ClassSplit = Pattern.compile("\\s+");
@@ -170,8 +172,20 @@ public class Element extends Node {
      * normal name of {@code div}.
      * @return normal name
      */
+    @Override
     public String normalName() {
         return tag.normalName();
+    }
+
+    /**
+     Test if this Element has the specified normalized name, and is in the specified namespace.
+     * @param normalName a normalized element name (e.g. {@code div}).
+     * @param namespace the namespace
+     * @return true if the element's normal name matches exactly, and is in the specified namespace
+     * @since 1.17.2
+     */
+    public boolean elementIs(String normalName, String namespace) {
+        return tag.normalName().equals(normalName) && tag.namespace().equals(namespace);
     }
 
     /**
@@ -268,6 +282,17 @@ public class Element extends Node {
     }
 
     /**
+     Get an Attribute by key. Changes made via {@link Attribute#setKey(String)}, {@link Attribute#setValue(String)} etc
+     will cascade back to this Element.
+     @param key the (case-sensitive) attribute key
+     @return the Attribute for this key, or null if not present.
+     @since 1.17.2
+     */
+    public Attribute attribute(String key) {
+        return hasAttributes() ? attributes().attribute(key) : null;
+    }
+
+    /**
      * Get this element's HTML5 custom data attributes. Each attribute in the element that has a key
      * starting with "data-" is included the dataset.
      * <p>
@@ -296,7 +321,7 @@ public class Element extends Node {
     public Elements parents() {
         Elements parents = new Elements();
         Element parent = this.parent();
-        while (parent != null && !parent.isNode("#root")) {
+        while (parent != null && !parent.nameIs("#root")) {
             parents.add(parent);
             parent = parent.parent();
         }
@@ -379,6 +404,23 @@ public class Element extends Node {
     }
 
     /**
+     Returns a Stream of this Element and all of its descendant Elements. The stream has document order.
+     @return a stream of this element and its descendants.
+     @see #nodeStream()
+     @since 1.17.1
+     */
+    public Stream<Element> stream() {
+        return NodeUtils.stream(this, Element.class);
+    }
+
+    private <T> List<T> filterNodes(Class<T> clazz) {
+        return childNodes.stream()
+                .filter(clazz::isInstance)
+                .map(clazz::cast)
+                .collect(Collectors.collectingAndThen(Collectors.toList(), Collections::unmodifiableList));
+    }
+
+    /**
      * Get this element's child text nodes. The list is unmodifiable but the text nodes may be manipulated.
      * <p>
      * This is effectively a filter on {@link #childNodes()} to get Text nodes.
@@ -395,12 +437,7 @@ public class Element extends Node {
      * </ul>
      */
     public List<TextNode> textNodes() {
-        List<TextNode> textNodes = new ArrayList<>();
-        for (Node node : childNodes) {
-            if (node instanceof TextNode)
-                textNodes.add((TextNode) node);
-        }
-        return Collections.unmodifiableList(textNodes);
+        return filterNodes(TextNode.class);
     }
 
     /**
@@ -413,12 +450,7 @@ public class Element extends Node {
      * @see #data()
      */
     public List<DataNode> dataNodes() {
-        List<DataNode> dataNodes = new ArrayList<>();
-        for (Node node : childNodes) {
-            if (node instanceof DataNode)
-                dataNodes.add((DataNode) node);
-        }
-        return Collections.unmodifiableList(dataNodes);
+        return filterNodes(DataNode.class);
     }
 
     /**
@@ -453,7 +485,6 @@ public class Element extends Node {
     public Elements select(Evaluator evaluator) {
         return Selector.select(evaluator, this);
     }
-
 
     /**
      * Find the first Element that matches the {@link Selector} CSS query, with this element as the starting context.
@@ -549,7 +580,7 @@ public class Element extends Node {
     }
 
     /**
-     Find Elements that match the supplied XPath expression.
+     Find Elements that match the supplied {@index XPath} expression.
      <p>Note that for convenience of writing the Xpath expression, namespaces are disabled, and queries can be
      expressed using the element's local name only.</p>
      <p>By default, XPath 1.0 expressions are supported. If you would to use XPath 2.0 or higher, you can provide an
@@ -697,7 +728,7 @@ public class Element extends Node {
     }
 
     /**
-     * Create a new element by tag name, and add it as the last child.
+     * Create a new element by tag name, and add it as this Element's last child.
      *
      * @param tagName the name of the tag (e.g. {@code div}).
      * @return the new element, to allow you to add content to it, e.g.:
@@ -707,6 +738,13 @@ public class Element extends Node {
         return appendElement(tagName, tag.namespace());
     }
 
+    /**
+     * Create a new element by tag name and namespace, add it as this Element's last child.
+     *
+     * @param tagName the name of the tag (e.g. {@code div}).
+     * @param namespace the namespace of the tag (e.g. {@link Parser#NamespaceHtml})
+     * @return the new element, in the specified namespace
+     */
     public Element appendElement(String tagName, String namespace) {
         Element child = new Element(Tag.valueOf(tagName, namespace, NodeUtils.parser(this).settings()), baseUri());
         appendChild(child);
@@ -714,7 +752,7 @@ public class Element extends Node {
     }
 
     /**
-     * Create a new element by tag name, and add it as the first child.
+     * Create a new element by tag name, and add it as this Element's first child.
      *
      * @param tagName the name of the tag (e.g. {@code div}).
      * @return the new element, to allow you to add content to it, e.g.:
@@ -724,6 +762,13 @@ public class Element extends Node {
         return prependElement(tagName, tag.namespace());
     }
 
+    /**
+     * Create a new element by tag name and namespace, and add it as this Element's first child.
+     *
+     * @param tagName the name of the tag (e.g. {@code div}).
+     * @param namespace the namespace of the tag (e.g. {@link Parser#NamespaceHtml})
+     * @return the new element, in the specified namespace
+     */
     public Element prependElement(String tagName, String namespace) {
         Element child = new Element(Tag.valueOf(tagName, namespace, NodeUtils.parser(this).settings()), baseUri());
         prependChild(child);
@@ -891,12 +936,9 @@ public class Element extends Node {
         // Escape tagname, and translate HTML namespace ns:tag to CSS namespace syntax ns|tag
         String tagName = escapeCssIdentifier(tagName()).replace("\\:", "|");
         StringBuilder selector = StringUtil.borrowBuilder().append(tagName);
-        // String classes = StringUtil.join(classNames().stream().map(TokenQueue::escapeCssIdentifier).iterator(), ".");
-        // todo - replace with ^^ in 1.16.1 when we enable Android support for stream etc
-        StringUtil.StringJoiner escapedClasses = new StringUtil.StringJoiner(".");
-        for (String name : classNames()) escapedClasses.add(escapeCssIdentifier(name));
-        String classes = escapedClasses.complete();
-        if (classes.length() > 0)
+        String classes = classNames().stream().map(TokenQueue::escapeCssIdentifier)
+                .collect(StringUtil.joining("."));
+        if (!classes.isEmpty())
             selector.append('.').append(classes);
 
         if (parent() == null || parent() instanceof Document) // don't add Document to selector, as will always have a html node
@@ -1362,7 +1404,7 @@ public class Element extends Node {
             } else if (node instanceof Element) {
                 Element element = (Element) node;
                 if (accum.length() > 0 &&
-                    (element.isBlock() || element.isNode("br")) &&
+                    (element.isBlock() || element.nameIs("br")) &&
                     !lastCharIsWhitespace(accum))
                     accum.append(' ');
             }
@@ -1389,20 +1431,20 @@ public class Element extends Node {
      */
     public String wholeText() {
         final StringBuilder accum = StringUtil.borrowBuilder();
-        NodeTraversor.traverse((node, depth) -> appendWholeText(node, accum), this);
+        nodeStream().forEach(node -> appendWholeText(node, accum));
         return StringUtil.releaseBuilder(accum);
     }
 
     private static void appendWholeText(Node node, StringBuilder accum) {
         if (node instanceof TextNode) {
             accum.append(((TextNode) node).getWholeText());
-        } else if (node.isNode("br")) {
+        } else if (node.nameIs("br")) {
             accum.append("\n");
         }
     }
 
     /**
-     Get the non-normalized, decoded text of this element, <b>not including</b> any child elements, including only any
+     Get the non-normalized, decoded text of this element, <b>not including</b> any child elements, including any
      newlines and spaces present in the original source.
      @return decoded, non-normalized text that is a direct child of this Element
      @see #text()
@@ -1444,7 +1486,7 @@ public class Element extends Node {
             if (child instanceof TextNode) {
                 TextNode textNode = (TextNode) child;
                 appendNormalisedText(accum, textNode);
-            } else if (child.isNode("br") && !lastCharIsWhitespace(accum)) {
+            } else if (child.nameIs("br") && !lastCharIsWhitespace(accum)) {
                 accum.append(" ");
             }
         }
@@ -1684,7 +1726,7 @@ public class Element extends Node {
      * @return the value of the form element, or empty string if not set.
      */
     public String val() {
-        if (normalName().equals("textarea"))
+        if (elementIs("textarea", NamespaceHtml))
             return text();
         else
             return attr("value");
@@ -1696,7 +1738,7 @@ public class Element extends Node {
      * @return this element (for chaining)
      */
     public Element val(String value) {
-        if (normalName().equals("textarea"))
+        if (elementIs("textarea", NamespaceHtml))
             text(value);
         else
             attr("value", value);
@@ -1706,10 +1748,10 @@ public class Element extends Node {
     /**
      Get the source range (start and end positions) of the end (closing) tag for this Element. Position tracking must be
      enabled prior to parsing the content.
-     @return the range of the closing tag for this element, if it was explicitly closed in the source. {@code Untracked}
-     otherwise.
+     @return the range of the closing tag for this element, or {@code untracked} if its range was not tracked.
      @see org.jsoup.parser.Parser#setTrackPosition(boolean)
      @see Node#sourceRange()
+     @see Range#isImplicit()
      @since 1.15.2
      */
     public Range endSourceRange() {
@@ -1799,7 +1841,9 @@ public class Element extends Node {
     @Override
     public Element shallowClone() {
         // simpler than implementing a clone version with no child copy
-        return new Element(tag, baseUri(), attributes == null ? null : attributes.clone());
+        String baseUri = baseUri();
+        if (baseUri.isEmpty()) baseUri = null; // saves setting a blank internal attribute
+        return new Element(tag, baseUri, attributes == null ? null : attributes.clone());
     }
 
     @Override
@@ -1816,8 +1860,9 @@ public class Element extends Node {
     @Override
     public Element clearAttributes() {
         if (attributes != null) {
-            super.clearAttributes();
-            attributes = null;
+            super.clearAttributes(); // keeps internal attributes via iterator
+            if (attributes.size() == 0)
+                attributes = null; // only remove entirely if no internal attributes
         }
 
         return this;
@@ -1849,16 +1894,14 @@ public class Element extends Node {
      @param action the function to perform on the element
      @return this Element, for chaining
      @see Node#forEachNode(Consumer)
+     @deprecated use {@link #stream()}.{@link Stream#forEach(Consumer) forEach(Consumer)} instead. (Removing this method
+     so Element can implement Iterable, which this signature conflicts with due to the non-void return.)
      */
+    @Deprecated
     public Element forEach(Consumer<? super Element> action) {
-        Validate.notNull(action);
-        NodeTraversor.traverse((node, depth) -> {
-            if (node instanceof Element)
-                action.accept((Element) node);
-        }, this);
+        stream().forEach(action);
         return this;
     }
-
 
     @Override
     public Element filter(NodeFilter nodeFilter) {
@@ -1888,7 +1931,7 @@ public class Element extends Node {
         return (parent() == null || parent().isBlock())
             && !isEffectivelyFirst()
             && !out.outline()
-            && !isNode("br");
+            && !nameIs("br");
     }
 
     private Object userData;

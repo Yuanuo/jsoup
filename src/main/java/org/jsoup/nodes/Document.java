@@ -11,11 +11,13 @@ import org.jsoup.parser.Tag;
 import org.jsoup.select.Elements;
 import org.jsoup.select.Evaluator;
 import org.jsoup.select.Selector;
+import org.jspecify.annotations.Nullable;
 
-import javax.annotation.Nullable;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetEncoder;
 import java.util.List;
+
+import static org.jsoup.parser.Parser.NamespaceHtml;
 
 /**
  A HTML Document.
@@ -49,7 +51,7 @@ public class Document extends Element {
      @see #Document(String namespace, String baseUri)
      */
     public Document(String baseUri) {
-        this(Parser.NamespaceHtml, baseUri);
+        this(NamespaceHtml, baseUri);
     }
 
     /**
@@ -114,7 +116,7 @@ public class Document extends Element {
     private Element htmlEl() {
         Element el = firstElementChild();
         while (el != null) {
-            if (el.normalName().equals("html"))
+            if (el.nameIs("html"))
                 return el;
             el = el.nextElementSibling();
         }
@@ -133,7 +135,7 @@ public class Document extends Element {
         final Element html = htmlEl();
         Element el = html.firstElementChild();
         while (el != null) {
-            if (el.normalName().equals("head"))
+            if (el.nameIs("head"))
                 return el;
             el = el.nextElementSibling();
         }
@@ -153,7 +155,7 @@ public class Document extends Element {
         final Element html = htmlEl();
         Element el = html.firstElementChild();
         while (el != null) {
-            if ("body".equals(el.normalName()) || "frameset".equals(el.normalName()))
+            if (el.nameIs("body") || el.nameIs("frameset"))
                 return el;
             el = el.nextElementSibling();
         }

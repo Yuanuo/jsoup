@@ -4,20 +4,25 @@ import org.jsoup.Connection;
 import org.jsoup.HttpStatusException;
 import org.jsoup.UncheckedIOException;
 import org.jsoup.UnsupportedMimeTypeException;
-import org.jsoup.internal.ConstrainableInputStream;
+import org.jsoup.internal.ControllableInputStream;
+import org.jsoup.internal.Functions;
+import org.jsoup.internal.SharedConstants;
 import org.jsoup.internal.StringUtil;
 import org.jsoup.nodes.Document;
 import org.jsoup.parser.Parser;
+import org.jsoup.parser.StreamParser;
 import org.jsoup.parser.TokenQueue;
+import org.jspecify.annotations.Nullable;
 
-import javax.annotation.Nullable;
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLSocketFactory;
 import java.io.BufferedInputStream;
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.net.CookieManager;
@@ -38,6 +43,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.Inflater;
@@ -111,7 +117,7 @@ public class HttpConnection implements Connection {
     }
 
     private HttpConnection.Request req;
-    private @Nullable Connection.Response res;
+    private Connection.@Nullable Response res;
 
     @Override
     public Connection newRequest() {
@@ -377,6 +383,10 @@ public class HttpConnection implements Connection {
         return this;
     }
 
+    @Override public Connection auth(RequestAuthenticator authenticator) {
+        req.auth(authenticator);
+        return this;
+    }
 
     @SuppressWarnings("unchecked")
     private static abstract class Base<T extends Connection.Base<T>> implements Connection.Base<T> {
@@ -535,7 +545,7 @@ public class HttpConnection implements Connection {
             return Collections.emptyList();
         }
 
-        private @Nullable Map.Entry<String, List<String>> scanHeaders(String name) {
+        private Map.@Nullable Entry<String, List<String>> scanHeaders(String name) {
             String lc = lowerCase(name);
             for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
                 if (lowerCase(entry.getKey()).equals(lc))
@@ -596,6 +606,7 @@ public class HttpConnection implements Connection {
         private String postDataCharset = DataUtil.defaultCharsetName;
         private @Nullable SSLSocketFactory sslSocketFactory;
         private CookieManager cookieManager;
+        private @Nullable RequestAuthenticator authenticator;
         private volatile boolean executing = false;
 
         Request() {
@@ -626,6 +637,7 @@ public class HttpConnection implements Connection {
             parserDefined = copy.parserDefined;
             sslSocketFactory = copy.sslSocketFactory; // these are all synchronized so safe to share
             cookieManager = copy.cookieManager;
+            authenticator = copy.authenticator;
             executing = false;
         }
 
@@ -764,6 +776,15 @@ public class HttpConnection implements Connection {
         CookieManager cookieManager() {
             return cookieManager;
         }
+
+        @Override public Connection.Request auth(@Nullable RequestAuthenticator authenticator) {
+            this.authenticator = authenticator;
+            return this;
+        }
+
+        @Override @Nullable public RequestAuthenticator auth() {
+            return authenticator;
+        }
     }
 
     public static class Response extends HttpConnection.Base<Connection.Response> implements Connection.Response {
@@ -772,7 +793,7 @@ public class HttpConnection implements Connection {
         private final int statusCode;
         private final String statusMessage;
         private @Nullable ByteBuffer byteData;
-        private @Nullable InputStream bodyStream;
+        private @Nullable ControllableInputStream bodyStream;
         private @Nullable HttpURLConnection conn;
         private @Nullable String charset;
         private @Nullable final String contentType;
@@ -782,9 +803,9 @@ public class HttpConnection implements Connection {
         private final HttpConnection.Request req;
 
         /*
-         * Matches XML content types (like text/xml, application/xhtml+xml;charset=UTF8, etc)
+         * Matches XML content types (like text/xml, image/svg+xml, application/xhtml+xml;charset=UTF8, etc)
          */
-        private static final Pattern xmlContentTypeRxp = Pattern.compile("(application|text)/\\w*\\+?xml.*");
+        private static final Pattern xmlContentTypeRxp = Pattern.compile("(\\w+)/\\w*\\+?xml.*");
 
         /**
          <b>Internal only! </b>Creates a dummy HttpConnection.Response, useful for testing. All actual responses
@@ -869,7 +890,7 @@ public class HttpConnection implements Connection {
                         && !contentType.startsWith("text/")
                         && !xmlContentTypeRxp.matcher(contentType).matches()
                         )
-                    throw new UnsupportedMimeTypeException("Unhandled content type. Must be text/*, application/xml, or application/*+xml",
+                    throw new UnsupportedMimeTypeException("Unhandled content type. Must be text/*, */xml, or */*+xml",
                             contentType, req.url().toString());
 
                 // switch to the XML parser if content type is xml and not parser not explicitly set
@@ -879,17 +900,15 @@ public class HttpConnection implements Connection {
 
                 res.charset = DataUtil.getCharsetFromContentType(res.contentType); // may be null, readInputStream deals with it
                 if (conn.getContentLength() != 0 && req.method() != HEAD) { // -1 means unknown, chunked. sun throws an IO exception on 500 response with no content when trying to read body
-                    res.bodyStream = conn.getErrorStream() != null ? conn.getErrorStream() : conn.getInputStream();
-                    Validate.notNull(res.bodyStream);
-                    if (res.hasHeaderWithValue(CONTENT_ENCODING, "gzip")) {
-                        res.bodyStream = new GZIPInputStream(res.bodyStream);
-                    } else if (res.hasHeaderWithValue(CONTENT_ENCODING, "deflate")) {
-                        res.bodyStream = new InflaterInputStream(res.bodyStream, new Inflater(true));
-                    }
-                    res.bodyStream = ConstrainableInputStream
-                        .wrap(res.bodyStream, DataUtil.bufferSize, req.maxBodySize())
-                        .timeout(startTime, req.timeout())
-                    ;
+                    InputStream stream = conn.getErrorStream() != null ? conn.getErrorStream() : conn.getInputStream();
+                    if (res.hasHeaderWithValue(CONTENT_ENCODING, "gzip"))
+                        stream = new GZIPInputStream(stream);
+                    else if (res.hasHeaderWithValue(CONTENT_ENCODING, "deflate"))
+                        stream = new InflaterInputStream(stream, new Inflater(true));
+                    
+                    res.bodyStream = ControllableInputStream.wrap(
+                        stream, SharedConstants.DefaultBufferSize, req.maxBodySize())
+                        .timeout(startTime, req.timeout());
                 } else {
                     res.byteData = DataUtil.emptyByteBuffer();
                 }
@@ -898,6 +917,10 @@ public class HttpConnection implements Connection {
                 throw e;
             } finally {
                 req.executing = false;
+
+                // detach any thread local auth delegate
+                if (req.authenticator != null)
+                    AuthenticationHandler.handler.remove();
             }
 
             res.executed = true;
@@ -930,19 +953,45 @@ public class HttpConnection implements Connection {
             return contentType;
         }
 
-        public Document parse() throws IOException {
+        /** Called from parse() or streamParser(), validates and prepares the input stream, and aligns common settings. */
+        private InputStream prepareParse() {
             Validate.isTrue(executed, "Request must be executed (with .execute(), .get(), or .post() before parsing response");
+            InputStream stream = bodyStream;
             if (byteData != null) { // bytes have been read in to the buffer, parse that
-                bodyStream = new ByteArrayInputStream(byteData.array());
+                stream = new ByteArrayInputStream(byteData.array());
                 inputStreamRead = false; // ok to reparse if in bytes
             }
             Validate.isFalse(inputStreamRead, "Input stream already read and parsed, cannot re-read.");
-            Document doc = DataUtil.parseInputStream(bodyStream, charset, url.toExternalForm(), req.parser());
+            Validate.notNull(stream);
+            inputStreamRead = true;
+            return stream;
+        }
+
+        @Override public Document parse() throws IOException {
+            InputStream stream = prepareParse();
+            Document doc = DataUtil.parseInputStream(stream, charset, url.toExternalForm(), req.parser());
             doc.connection(new HttpConnection(req, this)); // because we're static, don't have the connection obj. // todo - maybe hold in the req?
             charset = doc.outputSettings().charset().name(); // update charset from meta-equiv, possibly
-            inputStreamRead = true;
             safeClose();
             return doc;
+        }
+
+        @Override public StreamParser streamParser() throws IOException {
+            InputStream stream = prepareParse();
+            String baseUri = url.toExternalForm();
+            DataUtil.CharsetDoc charsetDoc = DataUtil.detectCharset(stream, charset, baseUri, req.parser());
+            // note that there may be a document in CharsetDoc as a result of scanning meta-data -- but as requires a stream parse, it is not used here. todo - revisit.
+
+            // set up the stream parser and rig this connection up to the parsed doc:
+            StreamParser streamer = new StreamParser(req.parser());
+            BufferedReader reader = new BufferedReader(new InputStreamReader(stream, charsetDoc.charset));
+            DataUtil.maybeSkipBom(reader, charsetDoc);
+            streamer.parse(reader, baseUri); // initializes the parse and the document, but does not step() it
+            streamer.document().connection(new HttpConnection(req, this));
+            charset = charsetDoc.charset.name();
+
+            // we don't safeClose() as in parse(); caller must close streamParser to close InputStream stream
+            return streamer;
         }
 
         private void prepareByteData() {
@@ -987,9 +1036,16 @@ public class HttpConnection implements Connection {
         @Override
         public BufferedInputStream bodyStream() {
             Validate.isTrue(executed, "Request must be executed (with .execute(), .get(), or .post() before getting response body");
+
+            // if we have read to bytes (via buffer up), return those as a stream.
+            if (byteData != null) {
+                return new BufferedInputStream(new ByteArrayInputStream(byteData.array()), SharedConstants.DefaultBufferSize);
+            }
+
             Validate.isFalse(inputStreamRead, "Request has already been read");
+            Validate.notNull(bodyStream);
             inputStreamRead = true;
-            return ConstrainableInputStream.wrap(bodyStream, DataUtil.bufferSize, req.maxBodySize());
+            return bodyStream.inputStream();
         }
 
         // set up connection defaults, and details from request
@@ -1008,6 +1064,8 @@ public class HttpConnection implements Connection {
 
             if (req.sslSocketFactory() != null && conn instanceof HttpsURLConnection)
                 ((HttpsURLConnection) conn).setSSLSocketFactory(req.sslSocketFactory());
+            if (req.authenticator != null)
+                AuthenticationHandler.handler.enable(req.authenticator, conn); // removed in finally
             if (req.method().hasBody())
                 conn.setDoOutput(true);
             CookieUtil.applyCookiesToRequest(req, conn); // from the Request key/val cookies and the Cookie Store
@@ -1040,7 +1098,7 @@ public class HttpConnection implements Connection {
         }
 
         // set up url, method, header, cookies
-        private Response(HttpURLConnection conn, HttpConnection.Request request, @Nullable HttpConnection.Response previousResponse) throws IOException {
+        private Response(HttpURLConnection conn, HttpConnection.Request request, HttpConnection.@Nullable Response previousResponse) throws IOException {
             this.conn = conn;
             this.req = request;
             method = Method.valueOf(conn.getRequestMethod());
@@ -1081,13 +1139,8 @@ public class HttpConnection implements Connection {
                 if (key == null || val == null)
                     continue; // skip http1.1 line
 
-                if (headers.containsKey(key))
-                    headers.get(key).add(val);
-                else {
-                    final ArrayList<String> vals = new ArrayList<>();
-                    vals.add(val);
-                    headers.put(key, vals);
-                }
+                final List<String> vals = headers.computeIfAbsent(key, Functions.listFunction());
+                vals.add(val);
             }
             return headers;
         }

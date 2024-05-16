@@ -2,15 +2,17 @@ package org.jsoup.integration;
 
 import org.jsoup.Connection;
 import org.jsoup.Jsoup;
+import org.jsoup.helper.DataUtil;
 import org.jsoup.integration.servlets.FileServlet;
 import org.jsoup.integration.servlets.SlowRider;
-import org.jsoup.internal.ConstrainableInputStream;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
+import org.jsoup.parser.StreamParser;
 import org.junit.jupiter.api.Test;
 
 import java.io.BufferedInputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -136,22 +138,65 @@ public class ConnectIT {
         assertEquals("outatime", h1.text());
     }
 
+    @Test void streamParserUncheckedExceptionOnTimeoutInStream() throws IOException {
+        boolean caught = false;
+        try (StreamParser streamParser = Jsoup.connect(SlowRider.Url)
+            .data(SlowRider.MaxTimeParam, "10000")
+            .data(SlowRider.IntroSizeParam, "8000") // 8K to pass first buffer, or the timeout would occur in execute or streamparser()
+            .timeout(4000) // has a 1000 sleep at the start
+            .execute()
+            .streamParser()) {
+
+            // we should expect to timeout while in stream
+            try {
+                long count = streamParser.stream().count();
+            } catch (Exception e) {
+                caught = true;
+                UncheckedIOException ioe = (UncheckedIOException) e;
+                IOException cause = ioe.getCause();
+                //assertInstanceOf(SocketTimeoutException.class, cause); // different JDKs seem to wrap this differently
+                assertInstanceOf(IOException.class, cause);
+
+            }
+        }
+        assertTrue(caught);
+    }
+
+    @Test void streamParserCheckedExceptionOnTimeoutInSelect() throws IOException {
+        boolean caught = false;
+        try (StreamParser streamParser = Jsoup.connect(SlowRider.Url)
+            .data(SlowRider.MaxTimeParam, "10000")
+            .data(SlowRider.IntroSizeParam, "8000") // 8K to pass first buffer, or the timeout would occur in execute or streamparser()
+            .timeout(4000) // has a 1000 sleep at the start
+            .execute()
+            .streamParser()) {
+
+            // we should expect to timeout while in stream
+            try {
+                long count = 0;
+                while (streamParser.selectNext("p") != null) {
+                    count++;
+                }
+            } catch (IOException e) {
+                caught = true;
+            }
+        }
+        assertTrue(caught);
+    }
+
     @Test
     public void remainingAfterFirstRead() throws IOException {
         int bufferSize = 5 * 1024;
         int capSize = 100 * 1024;
 
         String url = FileServlet.urlTo("/htmltests/large.html"); // 280 K
-        ConstrainableInputStream stream;
-        try (BufferedInputStream inputStream = Jsoup.connect(url).maxBodySize(capSize)
-            .execute().bodyStream()) {
 
-            assertTrue(inputStream instanceof ConstrainableInputStream);
-            stream = (ConstrainableInputStream) inputStream;
+        try (BufferedInputStream stream = Jsoup.connect(url).maxBodySize(capSize)
+            .execute().bodyStream()) {
 
             // simulates parse which does a limited read first
             stream.mark(bufferSize);
-            ByteBuffer firstBytes = stream.readToByteBuffer(bufferSize);
+            ByteBuffer firstBytes = DataUtil.readToByteBuffer(stream, bufferSize);
 
             byte[] array = firstBytes.array();
             String firstText = new String(array, StandardCharsets.UTF_8);
@@ -163,9 +208,13 @@ public class ConnectIT {
 
             // reset and read again
             stream.reset();
-            ByteBuffer fullRead = stream.readToByteBuffer(0);
+            ByteBuffer fullRead = DataUtil.readToByteBuffer(stream, 0);
             byte[] fullArray = fullRead.array();
-            assertEquals(capSize, fullArray.length);
+
+            // bodyStream is not capped to body size - only for jsoup consumed stream
+            assertTrue(fullArray.length > capSize);
+
+            assertEquals(280735, fullArray.length);
             String fullText = new String(fullArray, StandardCharsets.UTF_8);
             assertTrue(fullText.startsWith(firstText));
         }
@@ -176,14 +225,10 @@ public class ConnectIT {
         int bufferSize = 5 * 1024;
 
         String url = FileServlet.urlTo("/htmltests/large.html"); // 280 K
-        ConstrainableInputStream stream;
-        try (BufferedInputStream inputStream = Jsoup.connect(url).execute().bodyStream()) {
-            assertTrue(inputStream instanceof ConstrainableInputStream);
-            stream = (ConstrainableInputStream) inputStream;
-
+        try (BufferedInputStream stream = Jsoup.connect(url).execute().bodyStream()) {
             // simulates parse which does a limited read first
             stream.mark(bufferSize);
-            ByteBuffer firstBytes = stream.readToByteBuffer(bufferSize);
+            ByteBuffer firstBytes = DataUtil.readToByteBuffer(stream, bufferSize);
             byte[] array = firstBytes.array();
             String firstText = new String(array, StandardCharsets.UTF_8);
             assertTrue(firstText.startsWith("<html><head><title>Large"));
@@ -191,11 +236,27 @@ public class ConnectIT {
 
             // reset and read fully
             stream.reset();
-            ByteBuffer fullRead = stream.readToByteBuffer(0);
+            ByteBuffer fullRead = DataUtil.readToByteBuffer(stream, 0);
             byte[] fullArray = fullRead.array();
             assertEquals(280735, fullArray.length);
             String fullText = new String(fullArray, StandardCharsets.UTF_8);
             assertTrue(fullText.startsWith(firstText));
+        }
+    }
+
+    @Test public void bodyStreamConstrainedViaBufferUp() throws IOException {
+        int cap = 5 * 1024;
+        String url = FileServlet.urlTo("/htmltests/large.html"); // 280 K
+        try (BufferedInputStream stream = Jsoup
+            .connect(url)
+            .maxBodySize(cap)
+            .execute()
+            .bufferUp()
+            .bodyStream()) {
+
+            ByteBuffer cappedRead = DataUtil.readToByteBuffer(stream, 0);
+            byte[] cappedArray = cappedRead.array();
+            assertEquals(cap, cappedArray.length);
         }
     }
 }

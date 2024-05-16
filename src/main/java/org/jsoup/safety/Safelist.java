@@ -6,6 +6,8 @@ package org.jsoup.safety;
  */
 
 import org.jsoup.helper.Validate;
+import org.jsoup.internal.Functions;
+import org.jsoup.internal.Normalizer;
 import org.jsoup.nodes.Attribute;
 import org.jsoup.nodes.Attributes;
 import org.jsoup.nodes.Element;
@@ -52,9 +54,8 @@ import static org.jsoup.internal.Normalizer.lowerCase;
 
  <p>
  The cleaner and these safelists assume that you want to clean a <code>body</code> fragment of HTML (to add user
- supplied HTML into a templated page), and not to clean a full HTML document. If the latter is the case, either wrap the
- document HTML around the cleaned body HTML, or create a safelist that allows <code>html</code> and <code>head</code>
- elements as appropriate.
+ supplied HTML into a templated page), and not to clean a full HTML document. If the latter is the case, you could wrap
+ the templated document HTML around the cleaned body HTML.
  </p>
  <p>
  If you are going to extend a safelist, please be very careful. Make sure you understand what attributes may lead to
@@ -297,19 +298,15 @@ public class Safelist {
         Validate.notNull(attributes);
         Validate.isTrue(attributes.length > 0, "No attribute names supplied.");
 
+        addTags(tag);
         TagName tagName = TagName.valueOf(tag);
-        tagNames.add(tagName);
         Set<AttributeKey> attributeSet = new HashSet<>();
         for (String key : attributes) {
             Validate.notEmpty(key);
             attributeSet.add(AttributeKey.valueOf(key));
         }
-        if (this.attributes.containsKey(tagName)) {
-            Set<AttributeKey> currentSet = this.attributes.get(tagName);
-            currentSet.addAll(attributeSet);
-        } else {
-            this.attributes.put(tagName, attributeSet);
-        }
+        Set<AttributeKey> currentSet = this.attributes.computeIfAbsent(tagName, Functions.setFunction());
+        currentSet.addAll(attributeSet);
         return this;
     }
 
@@ -382,13 +379,8 @@ public class Safelist {
         AttributeKey attrKey = AttributeKey.valueOf(attribute);
         AttributeValue attrVal = AttributeValue.valueOf(value);
 
-        if (enforcedAttributes.containsKey(tagName)) {
-            enforcedAttributes.get(tagName).put(attrKey, attrVal);
-        } else {
-            Map<AttributeKey, AttributeValue> attrMap = new HashMap<>();
-            attrMap.put(attrKey, attrVal);
-            enforcedAttributes.put(tagName, attrMap);
-        }
+        Map<AttributeKey, AttributeValue> attrMap = enforcedAttributes.computeIfAbsent(tagName, Functions.mapFunction());
+        attrMap.put(attrKey, attrVal);
         return this;
     }
 
@@ -458,21 +450,9 @@ public class Safelist {
 
         TagName tagName = TagName.valueOf(tag);
         AttributeKey attrKey = AttributeKey.valueOf(attribute);
-        Map<AttributeKey, Set<Protocol>> attrMap;
-        Set<Protocol> protSet;
+        Map<AttributeKey, Set<Protocol>> attrMap = this.protocols.computeIfAbsent(tagName, Functions.mapFunction());
+        Set<Protocol> protSet = attrMap.computeIfAbsent(attrKey, Functions.setFunction());
 
-        if (this.protocols.containsKey(tagName)) {
-            attrMap = this.protocols.get(tagName);
-        } else {
-            attrMap = new HashMap<>();
-            this.protocols.put(tagName, attrMap);
-        }
-        if (attrMap.containsKey(attrKey)) {
-            protSet = attrMap.get(attrKey);
-        } else {
-            protSet = new HashSet<>();
-            attrMap.put(attrKey, protSet);
-        }
         for (String protocol : protocols) {
             Validate.notEmpty(protocol);
             Protocol prot = Protocol.valueOf(protocol);
@@ -622,7 +602,7 @@ public class Safelist {
         }
 
         static TagName valueOf(String value) {
-            return new TagName(value);
+            return new TagName(Normalizer.lowerCase(value));
         }
     }
 
@@ -632,7 +612,7 @@ public class Safelist {
         }
 
         static AttributeKey valueOf(String value) {
-            return new AttributeKey(value);
+            return new AttributeKey(Normalizer.lowerCase(value));
         }
     }
 

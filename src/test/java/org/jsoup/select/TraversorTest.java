@@ -8,8 +8,10 @@ import org.jsoup.nodes.Node;
 import org.jsoup.nodes.TextNode;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 public class TraversorTest {
     // Note: NodeTraversor.traverse(new NodeVisitor) is tested in
@@ -130,7 +132,7 @@ public class TraversorTest {
             public void head(Node node, int depth) {
                 if (node instanceof Element) {
                     Element el = (Element) node;
-                    if (el.normalName().equals("i")) {
+                    if (el.nameIs("i")) {
                         Element u = new Element("u").insertChildren(0, el.childNodes());
                         el.replaceWith(u);
                     }
@@ -192,5 +194,30 @@ public class TraversorTest {
         }, doc);
 
         assertEquals("<div><p id=\"2\">Two</p><p></p></div>", TextUtil.stripNewlines(doc.body().html()));
+    }
+
+    @Test void elementFunctionalTraverse() {
+        Document doc = Jsoup.parse("<div><p>1<p>2<p>3");
+        Element body = doc.body();
+
+        AtomicInteger seenCount = new AtomicInteger();
+        AtomicInteger deepest = new AtomicInteger();
+        body.traverse((node, depth) -> {
+            seenCount.incrementAndGet();
+            if (depth > deepest.get()) deepest.set(depth);
+        });
+
+        assertEquals(8, seenCount.get()); // body and contents
+        assertEquals(3, deepest.get());
+    }
+
+    @Test void seesDocRoot() {
+        Document doc = Jsoup.parse("<p>One");
+        AtomicBoolean seen = new AtomicBoolean(false);
+        doc.traverse((node, depth) -> {
+            if (node.equals(doc))
+                seen.set(true);
+        });
+        assertTrue(seen.get());
     }
 }
