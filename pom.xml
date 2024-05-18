@@ -65,26 +65,6 @@
           <!-- There is a JDK 9+ profile execution below, which adds multi-release=true and compiles module-info -->
         </executions>
       </plugin>
-
-      <!-- Ensure Java 8 and Android 10 API compatibility -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-javadoc-plugin</artifactId>
-        <version>3.6.3</version>
-        <configuration>
-          <doclint>none</doclint>
-          <source>8</source>
-          <linksource>true</linksource>
-        </configuration>
-        <executions>
-          <execution>
-            <id>attach-javadoc</id>
-            <goals>
-              <goal>jar</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-source-plugin</artifactId>
