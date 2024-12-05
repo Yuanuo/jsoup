@@ -7,6 +7,7 @@ import org.jsoup.nodes.Attributes;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.DocumentType;
 import org.jsoup.nodes.Element;
+import org.jsoup.nodes.Range;
 
 import java.util.ArrayList;
 
@@ -25,18 +26,19 @@ enum HtmlTreeBuilderState {
                 tb.insertCommentNode(t.asComment());
             } else if (t.isDoctype()) {
                 // todo: parse error check on expected doctypes
-                // todo: quirk state check on doctype ids
                 Token.Doctype d = t.asDoctype();
                 DocumentType doctype = new DocumentType(
                     tb.settings.normalizeTag(d.getName()), d.getPublicIdentifier(), d.getSystemIdentifier());
                 doctype.setPubSysKey(d.getPubSysKey());
                 tb.getDocument().appendChild(doctype);
                 tb.onNodeInserted(doctype);
-                if (d.isForceQuirks())
+                // todo: quirk state check on more doctype ids, if deemed useful (most are ancient legacy and presumably irrelevant)
+                if (d.isForceQuirks() || !doctype.name().equals("html") || doctype.publicId().equalsIgnoreCase("HTML"))
                     tb.getDocument().quirksMode(Document.QuirksMode.quirks);
                 tb.transition(BeforeHtml);
             } else {
                 // todo: check not iframe srcdoc
+                tb.getDocument().quirksMode(Document.QuirksMode.quirks); // missing doctype
                 tb.transition(BeforeHtml);
                 return tb.process(t); // re-process token
             }
@@ -370,12 +372,7 @@ enum HtmlTreeBuilderState {
                     stack = tb.getStack();
                     if (stack.size() > 0) {
                         Element html = tb.getStack().get(0);
-                        if (startTag.hasAttributes()) {
-                            for (Attribute attribute : startTag.attributes) {
-                                if (!html.hasAttr(attribute.getKey()))
-                                    html.attributes().put(attribute);
-                            }
-                        }
+                        mergeAttributes(startTag, html);
                     }
                     break;
                 case "body":
@@ -387,13 +384,8 @@ enum HtmlTreeBuilderState {
                     } else {
                         tb.framesetOk(false);
                         // will be on stack if this is a nested body. won't be if closed (which is a variance from spec, which leaves it on)
-                        Element body;
-                        if (startTag.hasAttributes() && (body = tb.getFromStack("body")) != null) { // we only ever put one body on stack
-                            for (Attribute attribute : startTag.attributes) {
-                                if (!body.hasAttr(attribute.getKey()))
-                                    body.attributes().put(attribute);
-                            }
-                        }
+                        Element body = tb.getFromStack("body");
+                        if (body != null) mergeAttributes(startTag, body);
                     }
                     break;
                 case "frameset":
@@ -1839,6 +1831,20 @@ enum HtmlTreeBuilderState {
             return tb.state().process(t, tb);
         }
     };
+
+    private static void mergeAttributes(Token.StartTag source, Element dest) {
+        if (!source.hasAttributes()) return;
+        for (Attribute attr : source.attributes) { // only iterates public attributes
+            Attributes destAttrs = dest.attributes();
+            if (!destAttrs.hasKey(attr.getKey())) {
+                Range.AttributeRange range = attr.sourceRange(); // need to grab range before its parent changes
+                destAttrs.put(attr);
+                if (source.trackSource) { // copy the attribute range
+                    destAttrs.sourceRange(attr.getKey(), range);
+                }
+            }
+        }
+    }
 
     private static final String nullString = String.valueOf('\u0000');
 

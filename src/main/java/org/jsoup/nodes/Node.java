@@ -469,7 +469,7 @@ public abstract class Node implements Cloneable {
         Validate.notNull(html);
         Validate.notNull(parentNode);
 
-        Element context = parent() instanceof Element ? (Element) parent() : null;
+        Element context = parentNode instanceof Element ? (Element) parentNode : null;
         List<Node> nodes = NodeUtils.parser(this).parseFragmentInput(html, context, baseUri());
         parentNode.addChildren(index, nodes.toArray(new Node[0]));
     }
@@ -541,7 +541,7 @@ public abstract class Node implements Cloneable {
         return firstChild;
     }
 
-    private Element getDeepChild(Element el) {
+    private static Element getDeepChild(Element el) {
         Element child = el.firstElementChild();
         while (child != null) {
             el = child;
@@ -560,6 +560,7 @@ public abstract class Node implements Cloneable {
      */
     public void replaceWith(Node in) {
         Validate.notNull(in);
+        if (parentNode == null) parentNode = in.parentNode; // allows old to have been temp removed before replacing
         Validate.notNull(parentNode);
         parentNode.replaceChild(this, in);
     }
@@ -993,10 +994,9 @@ public abstract class Node implements Cloneable {
         OuterHtmlVisitor(Appendable accum, Document.OutputSettings out) {
             this.accum = accum;
             this.out = out;
-            out.prepareEncoder();
         }
 
-        public void head(Node node, int depth) {
+        @Override public void head(Node node, int depth) {
             try {
 				node.outerHtmlHead(accum, depth, out);
 			} catch (IOException exception) {
@@ -1004,7 +1004,7 @@ public abstract class Node implements Cloneable {
 			}
         }
 
-        public void tail(Node node, int depth) {
+        @Override public void tail(Node node, int depth) {
             if (!node.nodeName().equals("#text")) { // saves a void hit.
 				try {
 					node.outerHtmlTail(accum, depth, out);

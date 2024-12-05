@@ -1,7 +1,9 @@
 package org.jsoup.parser;
 
 import org.jsoup.Jsoup;
+import org.jsoup.TextUtil;
 import org.jsoup.integration.servlets.FileServlet;
+import org.jsoup.internal.Normalizer;
 import org.jsoup.nodes.Attribute;
 import org.jsoup.nodes.CDataNode;
 import org.jsoup.nodes.Comment;
@@ -487,6 +489,24 @@ class PositionTest {
         assertEquals("h1:0-9~12-17; id:4-6=7-8; #text:9-12; #text:17-18; h2:18-27~30-35; id:22-24=25-26; #text:27-30; h10:35-40~43-49; #text:40-43; ", track.toString());
     }
 
+    @Test void tracksAfterPSelfClose() {
+        // https://github.com/jhy/jsoup/issues/2175
+        String html = "foo<p/>bar &amp; 2";
+        Document doc = Jsoup.parse(html, TrackingHtmlParser);
+        StringBuilder track = new StringBuilder();
+        doc.body().forEachNode(node -> accumulatePositions(node, track));
+        assertEquals("body:0-0~18-18; #text:0-3; p:3-7~3-7; #text:7-18; ", track.toString());
+    }
+
+    @Test void tracksFirstTextnode() {
+        // https://github.com/jhy/jsoup/issues/2106
+        String html = "foo<p></p>bar<p></p><div><b>baz</b></div>";
+        Document doc = Jsoup.parse(html, TrackingHtmlParser);
+        StringBuilder track = new StringBuilder();
+        doc.body().forEachNode(node -> accumulatePositions(node, track));
+        assertEquals("body:0-0~41-41; #text:0-3; p:3-6~6-10; #text:10-13; p:13-16~16-20; div:20-25~35-41; b:25-28~31-35; #text:28-31; ", track.toString());
+    }
+
     @Test void updateKeyMaintainsRangeLc() {
         String html = "<p xsi:CLASS=On>One</p>";
         Document doc = Jsoup.parse(html, TrackingHtmlParser);
@@ -499,6 +519,22 @@ class PositionTest {
         attr.setKey("class");
         assertEquals(expectedRange, attr.sourceRange().toString());
         assertEquals("class=\"On\"", attr.html());
+    }
+
+    @Test void tracksDocument() {
+        String html = "<!doctype html><title>Foo</title><p>Bar.";
+        Document doc = Jsoup.parse(html, TrackingHtmlParser);
+        StringBuilder track = new StringBuilder();
+        doc.forEachNode(node -> accumulatePositions(node, track));
+        assertEquals("#document:0-0~40-40; #doctype:0-15; html:15-15~40-40; head:15-15~33-33; title:15-22~15-33; #text:22-25; body:33-33~40-40; p:33-36~40-40; #text:36-40; ", track.toString());
+    }
+
+    @Test void tracksDocumentXml() {
+        String html = "<!doctype html><title>Foo</title><p>Bar.";
+        Document doc = Jsoup.parse(html, TrackingXmlParser);
+        StringBuilder track = new StringBuilder();
+        doc.forEachNode(node -> accumulatePositions(node, track));
+        assertEquals("#document:0-0~40-40; #doctype:0-15; title:15-22~25-33; #text:22-25; p:33-36~40-40; #text:36-40; ", track.toString());
     }
 
     @Test void updateKeyMaintainsRangeUc() {
@@ -531,6 +567,23 @@ class PositionTest {
         Attribute attr2 = p.attribute("CLASSY");
         assertEquals("CLASSY=\"Tree\"", attr2.html());
         assertEquals(expectedRange, attr2.sourceRange().toString());
+    }
+
+    @Test void movedAttributesHaveRange() {
+        // https://github.com/jhy/jsoup/issues/2204
+        String html = "<span id=1>One</span><html attr=foo><body class=2>Two</body><head title=3><body class=ok data=bar>";
+        // note that the attributes of the head el are not copied into the implicit head created by the span, per spec. html and body els are.
+        Document doc = Jsoup.parse(html, TrackingHtmlParser);
+        StringBuilder elTrack = new StringBuilder();
+        doc.forEachNode(node -> accumulatePositions(node, elTrack));
+
+        StringBuilder atTrack = new StringBuilder();
+        doc.forEachNode(node -> accumulateAttributePositions(node, atTrack));
+
+        assertEquals("#document:0-0~98-98; html:0-0~98-98; head:0-0~0-0; body:0-0~53-60; span:0-11~14-21; #text:11-14; #text:50-53; ", elTrack.toString());
+        assertEquals("attr:27-31=32-35; class:42-47=48-49; data:89-93=94-97; id:6-8=9-10; ", atTrack.toString());
+
+        assertEquals("<html attr=\"foo\"><head></head><body class=\"2\" data=\"bar\"><span id=\"1\">One</span>Two </body></html>", TextUtil.normalizeSpaces(doc.html()));
     }
 
     static void accumulateAttributePositions(Node node, StringBuilder sb) {

@@ -47,7 +47,17 @@ public interface Connection {
      * GET and POST http methods.
      */
     enum Method {
-        GET(false), POST(true), PUT(true), DELETE(true), PATCH(true), HEAD(false), OPTIONS(false), TRACE(false);
+        GET(false),
+        POST(true),
+        PUT(true),
+        DELETE(true),
+        /**
+         Note that unfortunately, PATCH is not supported in many JDKs.
+         */
+        PATCH(true),
+        HEAD(false),
+        OPTIONS(false),
+        TRACE(false);
 
         private final boolean hasBody;
 
@@ -366,7 +376,7 @@ public interface Connection {
      <code><pre>
      Connection session = Jsoup.newSession()
          .proxy("proxy.example.com", 8080)
-         .auth(auth -> {
+         .auth(auth -&gt; {
              if (auth.isServer()) { // provide credentials for the request url
                  Validate.isTrue(auth.url().getHost().equals("example.com"));
                  // check that we're sending credentials were we expect, and not redirected out
@@ -465,6 +475,18 @@ public interface Connection {
      * @return this Connection, for chaining
      */
     Connection response(Response response);
+
+    /**
+     Set the response progress handler, which will be called periodically as the response body is downloaded. Since
+     documents are parsed as they are downloaded, this is also a good proxy for the parse progress.
+     <p>The Response object is supplied as the progress context, and may be read from to obtain headers etc.</p>
+     @param handler the progress handler
+     @return this Connection, for chaining
+     @since 1.18.1
+     */
+    default Connection onResponseProgress(Progress<Response> handler) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Common methods for Requests and Responses
@@ -582,10 +604,6 @@ public interface Connection {
 
         /**
          * Get a cookie value by name from this request/response.
-         * <p>
-         * Response objects have a simplified cookie model. Each cookie set in the response is added to the response
-         * object's cookie key=value map. The cookie's path, domain, and expiry date are ignored.
-         * </p>
          * @param name name of cookie to retrieve.
          * @return value of cookie, or null if not set
          */
@@ -614,8 +632,12 @@ public interface Connection {
         T removeCookie(String name);
 
         /**
-         * Retrieve all of the request/response cookies as a map
-         * @return cookies
+         Retrieve the request/response cookies as a map. For response cookies, if duplicate cookie names were sent, the
+         last one set will be the one included. For session management, rather than using these response cookies, prefer
+         to use {@link Jsoup#newSession()} and related methods.
+
+         @return simple cookie map
+         @see #cookieStore()
          */
         Map<String, String> cookies();
     }

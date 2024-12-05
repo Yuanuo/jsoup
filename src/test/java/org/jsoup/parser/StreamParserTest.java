@@ -1,7 +1,10 @@
 package org.jsoup.parser;
 
+import org.jsoup.Connection;
+import org.jsoup.Jsoup;
 import org.jsoup.helper.DataUtil;
 import org.jsoup.integration.ParseTest;
+import org.jsoup.integration.servlets.FileServlet;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Node;
@@ -17,6 +20,7 @@ import java.nio.file.Files;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -32,7 +36,7 @@ class StreamParserTest {
             StringBuilder seen;
             seen = new StringBuilder();
             parser.stream().forEachOrdered(el -> trackSeen(el, seen));
-            assertEquals("title[Test];head+;div#1[D1]+;span[P One];p#3+;p#4[P Two];div#2[D2]+;p#6[P three];div#5[D3];body;html;", seen.toString());
+            assertEquals("title[Test];head+;div#1[D1]+;span[P One];p#3+;p#4[P Two];div#2[D2]+;p#6[P three];div#5[D3];body;html;#root;", seen.toString());
             // checks expected order, and the + indicates that element had a next sibling at time of emission
         }
     }
@@ -44,7 +48,7 @@ class StreamParserTest {
             StringBuilder seen;
             seen = new StringBuilder();
             parser.stream().forEachOrdered(el -> trackSeen(el, seen));
-            assertEquals("DIV#1[D1]+;span[P One];p#3+;p#4[P Two];div#2[D2]+;p#6[P three];div#5[D3];outmost;", seen.toString());
+            assertEquals("DIV#1[D1]+;span[P One];p#3+;p#4[P Two];div#2[D2]+;p#6[P three];div#5[D3];outmost;#root;", seen.toString());
             // checks expected order, and the + indicates that element had a next sibling at time of emission
         }
     }
@@ -60,7 +64,7 @@ class StreamParserTest {
             trackSeen(it.next(), seen);
         }
 
-        assertEquals("title[Test];head+;div#1[D1]+;span[P One];p#3+;p#4[P Two];div#2[D2]+;p#6[P three];div#5[D3];body;html;", seen.toString());
+        assertEquals("title[Test];head+;div#1[D1]+;span[P One];p#3+;p#4[P Two];div#2[D2]+;p#6[P three];div#5[D3];body;html;#root;", seen.toString());
         // checks expected order, and the + indicates that element had a next sibling at time of emission
     }
 
@@ -71,13 +75,13 @@ class StreamParserTest {
 
         StringBuilder seen = new StringBuilder();
         parser.stream().forEach(el -> trackSeen(el, seen));
-        assertEquals("head+;p[One]+;p[Two];body;html;", seen.toString());
+        assertEquals("head+;p[One]+;p[Two];body;html;#root;", seen.toString());
 
         String html2 = "<div>Three<div>Four</div></div>";
         StringBuilder seen2 = new StringBuilder();
         parser.parse(html2, "");
         parser.stream().forEach(el -> trackSeen(el, seen2));
-        assertEquals("head+;div[Four];div[Three];body;html;", seen2.toString());
+        assertEquals("head+;div[Four];div[Three];body;html;#root;", seen2.toString());
 
         // re-run without a new parse should be empty
         StringBuilder seen3 = new StringBuilder();
@@ -243,7 +247,7 @@ class StreamParserTest {
         StreamParser streamer = basic();
         assertFalse(isClosed(streamer));
         long count = streamer.stream().count();
-        assertEquals(6, count);
+        assertEquals(7, count);
 
         assertTrue(isClosed(streamer));
     }
@@ -257,7 +261,7 @@ class StreamParserTest {
             it.next();
             count++;
         }
-        assertEquals(6, count);
+        assertEquals(7, count);
         assertTrue(isClosed(streamer));
     }
 
@@ -340,6 +344,36 @@ class StreamParserTest {
         assertTrue(isClosed(streamer));
     }
 
+    @Test void canCleanlyConsumePortionOfUrl() throws IOException {
+        // test that we can get just the head section of large.html, and only read the minimum required from the URL
+        String url = FileServlet.urlTo("/htmltests/large.html"); // 280 K
+
+        AtomicReference<Float> seenPercent = new AtomicReference<>(0.0f);
+        StreamParser parserRef;
+
+        Connection con = Jsoup.connect(url)
+            .onResponseProgress((processed, total, percent, response) -> {
+                //System.out.println("Processed: " + processed + " Total: " + total + " Percent: " + percent);
+                seenPercent.set(percent);
+            });
+
+        Connection.Response response = con.execute();
+        try (StreamParser parser = response.streamParser()) {
+            parserRef = parser;
+            // get the head section
+            Element head = parser.selectFirst("head");
+            Element title = head.expectFirst("title");
+            assertEquals("Large HTML", title.text());
+        }
+        // now that we've left the try, the stream parser and the response bodystream should be closed
+        assertTrue(isClosed(parserRef));
+
+        // test that we didn't read all of the stream
+        assertTrue(seenPercent.get() > 0.0f);
+        assertTrue(seenPercent.get() < 100.0f);
+        // not sure of a good way to assert the bufferedInputReader buf (as held by ConstrainableInputStream in Response.BodyStream) is null. But it is via StreamParser.close.
+    }
+
     // Fragments
 
     @Test
@@ -350,7 +384,7 @@ class StreamParserTest {
         try (StreamParser parser = new StreamParser(Parser.htmlParser()).parseFragment(html, context, "")) {
             StringBuilder seen = new StringBuilder();
             parser.stream().forEachOrdered(el -> trackSeen(el, seen));
-            assertEquals("td[One];tr#1+;td[Two];tr#2+;td[Three];tr#3;tbody;table;", seen.toString());
+            assertEquals("td[One];tr#1+;td[Two];tr#2+;td[Three];tr#3;tbody;table;#root;", seen.toString());
             // checks expected order, and the + indicates that element had a next sibling at time of emission
             // note that we don't get a full doc, just the fragment (and the context at the end of the stack)
 
@@ -371,7 +405,7 @@ class StreamParserTest {
                 trackSeen(it.next(), seen);
             }
 
-            assertEquals("td[One];tr#1+;td[Two];tr#2+;td[Three];tr#3;tbody;table;", seen.toString());
+            assertEquals("td[One];tr#1+;td[Two];tr#2+;td[Three];tr#3;tbody;table;#root;", seen.toString());
             // checks expected order, and the + indicates that element had a next sibling at time of emission
             // note that we don't get a full doc, just the fragment (and the context at the end of the stack)
 
@@ -417,7 +451,7 @@ class StreamParserTest {
         try (StreamParser parser = new StreamParser(Parser.xmlParser()).parseFragment(html, context, "")) {
             StringBuilder seen = new StringBuilder();
             parser.stream().forEachOrdered(el -> trackSeen(el, seen));
-            assertEquals("td[One];tr#1+;td[Two];tr#2+;td[Three];tr#3;", seen.toString());
+            assertEquals("td[One];tr#1+;td[Two];tr#2+;td[Three];tr#3;#root;", seen.toString());
             // checks expected order, and the + indicates that element had a next sibling at time of emission
             // note that we don't get a full doc, just the fragment
 

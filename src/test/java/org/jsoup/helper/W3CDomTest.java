@@ -13,6 +13,7 @@ import org.xml.sax.InputSource;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.transform.OutputKeys;
 import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathExpression;
@@ -150,7 +151,7 @@ public class W3CDomTest {
 
         Document w3Doc = W3CDom.convert(jsoupDoc);
         String xml = W3CDom.asString(w3Doc, W3CDom.OutputXml());
-        assertEquals("<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head/><body name=\"\" style=\"color: red\"/></html>", xml);
+        assertEquals("<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head/><body _=\"\" name_=\"\" style=\"color: red\"/></html>", xml);
     }
 
     @Test
@@ -174,7 +175,7 @@ public class W3CDomTest {
 
         Document w3Doc = W3CDom.convert(jsoupDoc);
         String out = W3CDom.asString(w3Doc, W3CDom.OutputHtml());
-        String expected = "<!DOCTYPE html SYSTEM \"about:legacy-compat\"><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><META http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"></head><body><p hnh=\"2\">unicode attr names coerced</p></body></html>";
+        String expected = "<!DOCTYPE html SYSTEM \"about:legacy-compat\"><html xmlns=\"http://www.w3.org/1999/xhtml\"><head><META http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"></head><body><p h_nh=\"2\">unicode attr names coerced</p></body></html>";
         assertEquals(expected, TextUtil.stripNewlines(out));
     }
 
@@ -185,6 +186,20 @@ public class W3CDomTest {
         Document w3Doc = W3CDom.convert(jsoup);
         String xml = W3CDom.asString(w3Doc, W3CDom.OutputXml());
         assertEquals("<?xml version=\"1.0\" encoding=\"UTF-8\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><head/><body>&lt;インセンティブで高収入！&gt;Text <p>More</p></body></html>", xml);
+    }
+
+    @Test
+    public void canConvertToCustomDocument() throws ParserConfigurationException {
+        org.jsoup.nodes.Document document = Jsoup.parse("<html><div></div></html>");
+
+        DocumentBuilderFactory localDocumentBuilderFactory = DocumentBuilderFactory.newInstance();
+        Document customDocumentResult = localDocumentBuilderFactory.newDocumentBuilder().newDocument();
+
+        W3CDom w3cDom = new W3CDom();
+        w3cDom.convert(document, customDocumentResult);
+
+        String html = W3CDom.asString(customDocumentResult, W3CDom.OutputHtml());
+        assertEquals("<html><head><META http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"></head><body><div></div></body></html>", html);
     }
 
     @Test
@@ -370,6 +385,35 @@ public class W3CDomTest {
         Document doc = (new W3CDom()).fromJsoup(jdoc);
         assertNull(doc.getDoctype());
         assertEquals("Foo", doc.getFirstChild().getTextContent());
+    }
+
+    @Test void testHtmlParseAttributesAreCaseInsensitive() throws IOException {
+        // https://github.com/jhy/jsoup/issues/981
+        String html = "<html lang=en>\n" +
+            "<body>\n" +
+            "<img src=\"firstImage.jpg\" alt=\"Alt one\" />\n" +
+            "<IMG SRC=\"secondImage.jpg\" AlT=\"Alt two\" />\n" +
+            "</body>\n" +
+            "</html>";
+        org.jsoup.nodes.Document jsoupDoc;
+        jsoupDoc = Jsoup.parse(html);
+        org.jsoup.helper.W3CDom jDom = new org.jsoup.helper.W3CDom();
+        Document doc = jDom.fromJsoup(jsoupDoc);
+        org.w3c.dom.Element body = (org.w3c.dom.Element) doc.getDocumentElement().getElementsByTagName("body").item(0);
+        NodeList imgs = body.getElementsByTagName("img");
+        assertEquals(2, imgs.getLength());
+        org.w3c.dom.Element first = (org.w3c.dom.Element) imgs.item(0);
+        assertEquals(first.getAttributes().getLength(), 2);
+        String img1 = first.getAttribute("src");
+        assertEquals("firstImage.jpg", img1);
+        String alt1 = first.getAttribute("alt");
+        assertEquals("Alt one", alt1);
+        org.w3c.dom.Element second = (org.w3c.dom.Element) imgs.item(1);
+        assertEquals(second.getAttributes().getLength(), 2);
+        String img2 = second.getAttribute("src");
+        assertEquals("secondImage.jpg", img2);
+        String alt2 = second.getAttribute("alt");
+        assertEquals("Alt two", alt2);
     }
 
 }

@@ -24,8 +24,9 @@ import java.util.IdentityHashMap;
  * <tr><th align="left">Pattern</th><th align="left">Matches</th><th align="left">Example</th></tr>
  * <tr><td><code>*</code></td><td>any element</td><td><code>*</code></td></tr>
  * <tr><td><code>tag</code></td><td>elements with the given tag name</td><td><code>div</code></td></tr>
- * <tr><td><code>*|E</code></td><td>elements of type E in any namespace (including non-namespaced)</td><td><code>*|name</code> finds <code>&lt;fb:name&gt;</code> and <code>&lt;name&gt;</code> elements</td></tr>
- * <tr><td><code>ns|E</code></td><td>elements of type E in the namespace <i>ns</i></td><td><code>fb|name</code> finds <code>&lt;fb:name&gt;</code> elements</td></tr>
+ * <tr><td><code>*|E</code></td><td>elements of type E in any namespace (including non-namespaced)</td><td><code>*|name</code> finds <code>&lt;dc:name&gt;</code> and <code>&lt;name&gt;</code> elements</td></tr>
+ * <tr><td><code>ns|E</code></td><td>elements of type E in the namespace <i>ns</i></td><td><code>dc|name</code> finds <code>&lt;dc:name&gt;</code> elements</td></tr>
+ * <tr><td><code>ns|*</code></td><td>all elements in the namespace <i>ns</i></td><td><code>dc|*</code> finds <code>&lt;dc:p&gt;</code> and <code>&lt;dc:img&gt;</code>elements</td></tr>
  * <tr><td><code>#id</code></td><td>elements with attribute ID of "id"</td><td><code>div#wrap</code>, <code>#logo</code></td></tr>
  * <tr><td><code>.class</code></td><td>elements with a class name of "class"</td><td><code>div.left</code>, <code>.result</code></td></tr>
  * <tr><td><code>[attr]</code></td><td>elements with an attribute named "attr" (with any value)</td><td><code>a[href]</code>, <code>[title]</code></td></tr>
@@ -49,7 +50,7 @@ import java.util.IdentityHashMap;
  * <tr><td><code>:gt(<em>n</em>)</code></td><td>elements whose sibling index is greater than <em>n</em></td><td><code>td:gt(1)</code> finds cells after skipping the first two</td></tr>
  * <tr><td><code>:eq(<em>n</em>)</code></td><td>elements whose sibling index is equal to <em>n</em></td><td><code>td:eq(0)</code> finds the first cell of each row</td></tr>
  * <tr><td><code>:has(<em>selector</em>)</code></td><td>elements that contains at least one element matching the <em>selector</em></td><td><code>div:has(p)</code> finds <code>div</code>s that contain <code>p</code> elements.<br><code>div:has(&gt; a)</code> selects <code>div</code> elements that have at least one direct child <code>a</code> element.<br><code>section:has(h1, h2)</code> finds <code>section</code> elements that contain a <code>h1</code> or a <code>h2</code> element</td></tr>
- * <tr><td><code>:is(<em>selector list</em>)</code></td><td>elements that match any of the selectors in the selector list</td><td><code>:is(h1, h2, h3, h4, h5, h6)</code> finds any heading element.<br><code>:is(section, article) > :is(h1, h2)</code> finds a <code>h1</code> or <code>h2</code> that is a direct child of a <code>section</code> or an <code>article</code></td></tr>
+ * <tr><td><code>:is(<em>selector list</em>)</code></td><td>elements that match any of the selectors in the selector list</td><td><code>:is(h1, h2, h3, h4, h5, h6)</code> finds any heading element.<br><code>:is(section, article) &gt; :is(h1, h2)</code> finds a <code>h1</code> or <code>h2</code> that is a direct child of a <code>section</code> or an <code>article</code></td></tr>
  * <tr><td><code>:not(<em>selector</em>)</code></td><td>elements that do not match the <em>selector</em>. See also {@link Elements#not(String)}</td><td><code>div:not(.logo)</code> finds all divs that do not have the "logo" class.<p><code>div:not(:has(div))</code> finds divs that do not contain divs.</p></td></tr>
  * <tr><td><code>:contains(<em>text</em>)</code></td><td>elements that contains the specified text. The search is case insensitive. The text may appear in the found element, or any of its descendants. The text is whitespace normalized. <p>To find content that includes parentheses, escape those with a {@code \}.</p></td><td><code>p:contains(jsoup)</code> finds p elements containing the text "jsoup".<p>{@code p:contains(hello \(there\) finds p elements containing the text "Hello (There)"}</p></td></tr>
  * <tr><td><code>:containsOwn(<em>text</em>)</code></td><td>elements that directly contain the specified text. The search is case insensitive. The text must appear in the found element, not any of its descendants.</td><td><code>p:containsOwn(jsoup)</code> finds p elements with own text "jsoup".</td></tr>
@@ -74,7 +75,7 @@ import java.util.IdentityHashMap;
  * <tr><td><code>:last-of-type</code></td><td>elements that are the last sibling of its type in the list of children of its parent element</td><td><code>tr {@literal >} td:last-of-type</code></td></tr>
  * <tr><td><code>:only-child</code></td><td>elements that have a parent element and whose parent element have no other element children</td><td></td></tr>
  * <tr><td><code>:only-of-type</code></td><td> an element that has a parent element and whose parent element has no other element children with the same expanded element name</td><td></td></tr>
- * <tr><td><code>:empty</code></td><td>elements that have no children at all</td><td></td></tr>
+ * <tr><td><code>:empty</code></td><td>elements that contain no child elements or nodes, with the exception of blank text nodes, comments, XML declarations, and doctype declarations. In other words, it matches elements that are effectively empty of meaningful content.</td><td><code>li:not(:empty)</code></td></tr>
  * </table>
  *
  * <p>A word on using regular expressions in these selectors: depending on the content of the regex, you will need to quote the pattern using <b><code>Pattern.quote("regex")</code></b> for it to parse correctly through both the selector parser and the regex parser. E.g. <code>String query = "div:matches(" + Pattern.quote(regex) + ");"</code>.</p>

@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+import static org.jsoup.select.SelectorTest.assertSelectedOwnText;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -218,6 +219,16 @@ public class ElementTest {
         assertEquals("", p1.wholeText());
         assertEquals(" ", p2.wholeText());
         assertEquals(".  ", p3.wholeText());
+    }
+
+    @Test void buttonTextHasSpace() {
+        // https://github.com/jhy/jsoup/issues/2105
+        Document doc = Jsoup.parse("<html><button>Reply</button><button>All</button></html>");
+        String text = doc.body().text();
+        String wholetext = doc.body().wholeText();
+
+        assertEquals("Reply All", text);
+        assertEquals("ReplyAll", wholetext);
     }
 
     @Test
@@ -2600,6 +2611,52 @@ public class ElementTest {
         Elements elements = root.select(selector); // would overflow in nested And ImmediateParent chain eval
         assertEquals(1, elements.size());
         assertEquals(element, elements.first());
+    }
+
+    @Test void cssSelectorWithBracket() {
+        // https://github.com/jhy/jsoup/issues/2146
+        Document doc = Jsoup.parse("<div class='a[foo]'>One</div><div class='b[bar]'>Two</div>");
+        Element div = doc.expectFirst("div");
+        String selector = div.cssSelector();
+        assertEquals("html > body > div.a\\[foo\\]", selector); // would fail with "Did not find balanced marker", consumeSubquery was not handling escapes
+
+        Elements selected = doc.select(selector);
+        assertEquals(1, selected.size());
+        assertEquals(selected.first(), div);
+    }
+
+    @Test void cssSelectorUnbalanced() {
+        // https://github.com/jhy/jsoup/issues/2146
+        Document doc = Jsoup.parse("<div class='a(foo'>One</div><div class='a-bar'>Two</div>");
+        Element div = doc.expectFirst("div");
+        String selector = div.cssSelector();
+        assertEquals("html > body > div.a\\(foo", selector);
+
+        Elements selected = doc.select(selector);
+        assertEquals(1, selected.size());
+        assertEquals(selected.first(), div);
+    }
+
+    @Test void cssSelectorWithAsterisk() {
+        // https://github.com/jhy/jsoup/issues/2169
+        Document doc = Jsoup.parse("<div class='vds-items_flex-end [&amp;_>_*:first-child]:vds-pt_0'>One</div><div class='vds-items_flex-end'>Two</div>");
+        Element div = doc.expectFirst("div");
+        String selector = div.cssSelector();
+        assertEquals("html > body > div.vds-items_flex-end.\\[\\&_\\>_\\*\\:first-child\\]\\:vds-pt_0", selector);
+
+        Elements selected = doc.select(selector);
+        assertEquals(1, selected.size());
+        assertEquals(selected.first(), div);
+    }
+
+    @Test void cssSelectorWithPipe() {
+        // https://github.com/jhy/jsoup/issues/1998
+        Document doc = Jsoup.parse("<div><span class='|'>One</div>");
+        Element span = doc.expectFirst("div span");
+        String selector = span.cssSelector();
+        assertEquals("html > body > div > span.\\|", selector);
+        Elements selected = doc.select(selector);
+        assertSelectedOwnText(selected, "One");
     }
 
     @Test void orphanSiblings() {

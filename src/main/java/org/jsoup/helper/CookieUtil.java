@@ -2,8 +2,11 @@ package org.jsoup.helper;
 
 import org.jsoup.Connection;
 import org.jsoup.internal.StringUtil;
+import org.jsoup.parser.TokenQueue;
 
 import java.io.IOException;
+import java.net.CookieManager;
+import java.net.HttpCookie;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URI;
@@ -83,8 +86,29 @@ class CookieUtil {
         }
     }
 
-    static void storeCookies(HttpConnection.Request req, URL url, Map<String, List<String>> resHeaders) throws IOException {
-        req.cookieManager().put(CookieUtil.asUri(url), resHeaders); // stores cookies for session
+    /** Store the Result cookies into the cookie manager, and place relevant cookies into the Response object. */
+    static void storeCookies(HttpConnection.Request req, HttpConnection.Response res, URL url, Map<String, List<String>> resHeaders) throws IOException {
+        CookieManager manager = req.cookieManager();
+        URI uri = CookieUtil.asUri(url);
+        manager.put(uri, resHeaders); // stores cookies for session
 
+        // set up the simple cookies() map
+        // the response may include cookies that are not relevant to this request, but users may require them if they are not using the cookie manager (setting request cookies only from the simple cookies() response):
+        for (Map.Entry<String, List<String>> entry : resHeaders.entrySet()) {
+            String name = entry.getKey();
+            List<String> values = entry.getValue();
+            if (name.equalsIgnoreCase("Set-Cookie")) {
+                for (String value : values) {
+                    if (value == null)
+                        continue;
+                    TokenQueue cd = new TokenQueue(value);
+                    String cookieName = cd.chompTo("=").trim();
+                    String cookieVal = cd.consumeTo(";").trim();
+                    // ignores path, date, domain, validateTLSCertificates et al. full details will be available in cookiestore if required
+                    // name not blank, value not null
+                    res.cookie(cookieName, cookieVal); // if duplicate names, last set will win
+                }
+            }
+        }
     }
 }
