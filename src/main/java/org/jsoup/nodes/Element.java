@@ -2,6 +2,7 @@ package org.jsoup.nodes;
 
 import org.jsoup.helper.ChangeNotifyingArrayList;
 import org.jsoup.helper.Validate;
+import org.jsoup.internal.Normalizer;
 import org.jsoup.internal.StringUtil;
 import org.jsoup.parser.ParseSettings;
 import org.jsoup.parser.Parser;
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +37,8 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.jsoup.internal.Normalizer.normalize;
+import static org.jsoup.nodes.Document.OutputSettings.Syntax.html;
+import static org.jsoup.nodes.Document.OutputSettings.Syntax.xml;
 import static org.jsoup.nodes.TextNode.lastCharIsWhitespace;
 import static org.jsoup.parser.Parser.NamespaceHtml;
 import static org.jsoup.parser.TokenQueue.escapeCssIdentifier;
@@ -44,7 +48,7 @@ import static org.jsoup.parser.TokenQueue.escapeCssIdentifier;
  <p>
  From an Element, you can extract data, traverse the node graph, and manipulate the HTML.
 */
-public class Element extends Node {
+public class Element extends Node implements Iterable<Element> {
     private static final List<Element> EmptyChildren = Collections.emptyList();
     private static final Pattern ClassSplit = Pattern.compile("\\s+");
     private static final String BaseUriKey = Attributes.internalKey("baseUri");
@@ -468,7 +472,7 @@ public class Element extends Node {
      * @param cssQuery a {@link Selector} CSS-like query
      * @return an {@link Elements} list containing elements that match the query (empty if none match)
      * @see Selector selector query syntax
-     * @see QueryParser#parse(String)
+     * @see #select(Evaluator)
      * @throws Selector.SelectorParseException (unchecked) on an invalid CSS query.
      */
     public Elements select(String cssQuery) {
@@ -481,9 +485,43 @@ public class Element extends Node {
      * repeatedly parsing the CSS query.
      * @param evaluator an element evaluator
      * @return an {@link Elements} list containing elements that match the query (empty if none match)
+     * @see QueryParser#parse(String)
      */
     public Elements select(Evaluator evaluator) {
         return Selector.select(evaluator, this);
+    }
+
+    /**
+     Selects elements from the given root that match the specified {@link Selector} CSS query, with this element as the
+     starting context, and returns them as a lazy Stream. Matched elements may include this element, or any of its
+     children.
+     <p>
+     Unlike {@link #select(String query)}, which returns a complete list of all matching elements, this method returns a
+     {@link Stream} that processes elements lazily as they are needed. The stream operates in a "pull" model — elements
+     are fetched from the root as the stream is traversed. You can use standard {@code Stream} operations such as
+     {@code filter}, {@code map}, or {@code findFirst} to process elements on demand.
+     </p>
+
+     @param cssQuery a {@link Selector} CSS-like query
+     @return a {@link Stream} containing elements that match the query (empty if none match)
+     @throws Selector.SelectorParseException (unchecked) on an invalid CSS query.
+     @see Selector selector query syntax
+     @see QueryParser#parse(String)
+     @since 1.19.1
+     */
+    public Stream<Element> selectStream(String cssQuery) {
+        return Selector.selectStream(cssQuery, this);
+    }
+
+    /**
+     Find a Stream of elements that match the supplied Evaluator.
+
+     @param evaluator an element Evaluator
+     @return a {@link Stream} containing elements that match the query (empty if none match)
+     @since 1.19.1
+     */
+    public Stream<Element> selectStream(Evaluator evaluator) {
+        return Selector.selectStream(evaluator, this);
     }
 
     /**
@@ -900,32 +938,47 @@ public class Element extends Node {
     }
 
     /**
-     * Get a CSS selector that will uniquely select this element.
-     * <p>
-     * If the element has an ID, returns #id;
-     * otherwise returns the parent (if any) CSS selector, followed by {@literal '>'},
-     * followed by a unique selector for the element (tag.class.class:nth-child(n)).
-     * </p>
-     *
-     * @return the CSS Path that can be used to retrieve the element in a selector.
+     Gets an #id selector for this element, if it has a unique ID. Otherwise, returns an empty string.
+
+     @param ownerDoc the document that owns this element, if there is one
      */
-    public String cssSelector() {
-        if (id().length() > 0) {
-            // prefer to return the ID - but check that it's actually unique first!
-            String idSel = "#" + escapeCssIdentifier(id());
-            Document doc = ownerDocument();
-            if (doc != null) {
-                Elements els = doc.select(idSel);
-                if (els.size() == 1 && els.get(0) == this) // otherwise, continue to the nth-child impl
-                    return idSel;
+    private String uniqueIdSelector(@Nullable Document ownerDoc) {
+        String id = id();
+        if (!id.isEmpty()) { // check if the ID is unique and matches this
+            String idSel = "#" + escapeCssIdentifier(id);
+            if (ownerDoc != null) {
+                Elements els = ownerDoc.select(idSel);
+                if (els.size() == 1 && els.get(0) == this) return idSel;
             } else {
-                return idSel; // no ownerdoc, return the ID selector
+                return idSel;
             }
         }
+        return EmptyString;
+    }
 
+    /**
+     Get a CSS selector that will uniquely select this element.
+     <p>
+     If the element has an ID, returns #id; otherwise returns the parent (if any) CSS selector, followed by
+     {@literal '>'}, followed by a unique selector for the element (tag.class.class:nth-child(n)).
+     </p>
+
+     @return the CSS Path that can be used to retrieve the element in a selector.
+     */
+    public String cssSelector() {
+        Document ownerDoc = ownerDocument();
+        String idSel = uniqueIdSelector(ownerDoc);
+        if (!idSel.isEmpty()) return idSel;
+
+        // No unique ID, work up the parent stack and find either a unique ID to hang from, or just a GP > Parent > Child chain
         StringBuilder selector = StringUtil.borrowBuilder();
         Element el = this;
         while (el != null && !(el instanceof Document)) {
+            idSel = el.uniqueIdSelector(ownerDoc);
+            if (!idSel.isEmpty()) {
+                selector.insert(0, idSel);
+                break; // found a unique ID to use as ancestor; stop
+            }
             selector.insert(0, el.cssSelectorComponent());
             el = el.parent();
         }
@@ -1125,12 +1178,7 @@ public class Element extends Node {
      */
     public @Nullable Element getElementById(String id) {
         Validate.notEmpty(id);
-
-        Elements elements = Collector.collect(new Evaluator.Id(id), this);
-        if (elements.size() > 0)
-            return elements.get(0);
-        else
-            return null;
+        return Collector.findFirst(new Evaluator.Id(id), this);
     }
 
     /**
@@ -1763,12 +1811,12 @@ public class Element extends Node {
                 indent(accum, depth, out);
             }
         }
-        accum.append('<').append(tagName());
+        accum.append('<').append(safeTagName(out.syntax()));
         if (attributes != null) attributes.html(accum, out);
 
         // selfclosing includes unknown tags, isEmpty defines tags that are always empty
         if (childNodes.isEmpty() && tag.isSelfClosing()) {
-            if (out.syntax() == Document.OutputSettings.Syntax.html && tag.isEmpty())
+            if (out.syntax() == html && tag.isEmpty())
                 accum.append('>');
             else
                 accum.append(" />"); // <img> in html, <img /> in xml
@@ -1785,8 +1833,13 @@ public class Element extends Node {
                     (out.outline() && (childNodes.size()>1 || (childNodes.size()==1 && (childNodes.get(0) instanceof Element))))
             )))
                 indent(accum, depth, out);
-            accum.append("</").append(tagName()).append('>');
+            accum.append("</").append(safeTagName(out.syntax())).append('>');
         }
+    }
+
+    /* If XML syntax, normalizes < to _ in tag name. */
+    @Nullable private String safeTagName(Document.OutputSettings.Syntax syntax) {
+        return syntax == xml ? Normalizer.xmlSafeTagName(tagName()) : tagName();
     }
 
     /**
@@ -1883,15 +1936,20 @@ public class Element extends Node {
      Perform the supplied action on this Element and each of its descendant Elements, during a depth-first traversal.
      Elements may be inspected, changed, added, replaced, or removed.
      @param action the function to perform on the element
-     @return this Element, for chaining
      @see Node#forEachNode(Consumer)
-     @deprecated use {@link #stream()}.{@link Stream#forEach(Consumer) forEach(Consumer)} instead. (Removing this method
-     so Element can implement Iterable, which this signature conflicts with due to the non-void return.)
      */
-    @Deprecated
-    public Element forEach(Consumer<? super Element> action) {
+    @Override
+    public void forEach(Consumer<? super Element> action) {
         stream().forEach(action);
-        return this;
+    }
+
+    /**
+     Returns an Iterator that iterates this Element and each of its descendant Elements, in document order.
+     @return an Iterator
+     */
+    @Override
+    public Iterator<Element> iterator() {
+        return new NodeIterator<>(this, Element.class);
     }
 
     @Override

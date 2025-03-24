@@ -8,7 +8,9 @@ import org.jsoup.parser.Parser;
 import org.junit.jupiter.api.Test;
 
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -396,6 +398,19 @@ public class SelectorTest {
         String h = "<div id=1><p>Hello<p><b>there</b></p></div><div id=2><span>Hi</span></div>";
         Document doc = Jsoup.parse(h);
         Elements divChilds = doc.select("div > *");
+        assertEquals(3, divChilds.size());
+        assertEquals("p", divChilds.get(0).tagName());
+        assertEquals("p", divChilds.get(1).tagName());
+        assertEquals("span", divChilds.get(2).tagName());
+    }
+
+    @Test public void streamParentChildStar() {
+        String h = "<div id=1><p>Hello<p><b>there</b></p></div><div id=2><span>Hi</span></div>";
+        Document doc = Jsoup.parse(h);
+
+        List<Element> divChilds = doc.selectStream("div > *")
+            .collect(Collectors.toList());
+
         assertEquals(3, divChilds.size());
         assertEquals("p", divChilds.get(0).tagName());
         assertEquals("p", divChilds.get(1).tagName());
@@ -1267,7 +1282,7 @@ public class SelectorTest {
         // https://github.com/jhy/jsoup/issues/2073
         Document doc = Jsoup.parse("<div id=parent><span class=child></span><span class=child></span><span class=child></span></div>");
         String q = "#parent [class*=child], .some-other-selector .nested";
-        assertEquals("(Or (And (Parent (Id '#parent'))(AttributeWithValueContaining '[class*=child]'))(And (Class '.nested')(Parent (Class '.some-other-selector'))))", EvaluatorDebug.sexpr(q));
+        assertEquals("(Or (And (AttributeWithValueContaining '[class*=child]')(Ancestor (Id '#parent')))(And (Class '.nested')(Ancestor (Class '.some-other-selector'))))", EvaluatorDebug.sexpr(q));
         Elements els = doc.select(q);
         assertEquals(3, els.size());
     }
@@ -1342,5 +1357,97 @@ public class SelectorTest {
         Elements els = document.select(q);
         assertEquals(1, els.size());
         assertEquals("o", els.get(0).id());
+    }
+
+    @Test void negativeNthChild() {
+        // https://github.com/jhy/jsoup/issues/1147
+        String html = "<p>1</p> <p>2</p> <p>3</p> <p>4</p>";
+        Document doc = Jsoup.parse(html);
+
+        // Digitless
+        Elements pos = doc.select("p:nth-child(n+2)");
+        assertSelectedOwnText(pos, "2", "3", "4");
+
+        Elements neg = doc.select("p:nth-child(-n+2)");
+        assertSelectedOwnText(neg, "1", "2");
+
+        Elements combo = doc.select("p:nth-child(n+2):nth-child(-n+2)");
+        assertSelectedOwnText(combo, "2");
+
+        // Digitful, 2n+2 or -1n+2
+        Elements pos2 = doc.select("p:nth-child(2n+2)");
+        assertSelectedOwnText(pos2, "2", "4");
+
+        Elements neg2 = doc.select("p:nth-child(-1n+2)");
+        assertSelectedOwnText(neg2, "1", "2");
+    }
+
+    // Tests that nested structural and combining evaluators get reset
+    private static class ResetTracker extends Evaluator {
+        boolean resetCalled = false;
+        @Override
+        public boolean matches(Element root, Element element) {
+            return true;
+        }
+
+        @Override
+        protected void reset() {
+            resetCalled = true;
+            super.reset();
+        }
+    }
+
+    @Test void notResetCascades() {
+        ResetTracker track = new ResetTracker();
+        StructuralEvaluator.Not structEval = new StructuralEvaluator.Not(track);
+
+        Document doc = Jsoup.parse("<div><p>Test</p></div>");
+        Element p = doc.expectFirst("p");
+        structEval.matches(doc, p);
+
+        assertFalse(structEval.threadMemo.get().isEmpty());
+        assertFalse(track.resetCalled);
+
+        structEval.reset();
+        assertTrue(structEval.threadMemo.get().isEmpty());
+        assertTrue(track.resetCalled);
+    }
+
+    @Test void testImmediateParentRunCascades() {
+        ResetTracker child = new ResetTracker();
+        ResetTracker parent = new ResetTracker();
+
+        StructuralEvaluator.ImmediateParentRun run = new StructuralEvaluator.ImmediateParentRun(child);
+        run.add(parent);
+
+        Document doc = Jsoup.parse("<div><p><span>Test</span></p></div>");
+        Element span = doc.expectFirst("span");
+        assertTrue(run.matches(doc, span));
+
+        run.reset();
+        assertTrue(child.resetCalled);
+        assertTrue(parent.resetCalled);
+    }
+
+    @Test
+    public void testAncestorChain() {
+        ResetTracker grandParent = new ResetTracker();
+        ResetTracker parent = new ResetTracker();
+        ResetTracker child = new ResetTracker();
+
+        StructuralEvaluator.Ancestor b_needs_a = new StructuralEvaluator.Ancestor(grandParent);
+        StructuralEvaluator.Ancestor c_needs_b = new StructuralEvaluator.Ancestor(parent);
+        CombiningEvaluator.And chain = new CombiningEvaluator.And(child, c_needs_b, b_needs_a);
+
+        Document doc = Jsoup.parse("<div class='A'><p class='B'><span class='C'>Test</span></p></div>");
+        Element span = doc.expectFirst("span");
+        assertTrue(chain.matches(doc, span), "Should match span in correct ancestor chain");
+
+        chain.reset();
+        assertTrue(grandParent.resetCalled);
+        assertTrue(parent.resetCalled);
+        assertTrue(child.resetCalled);
+        assertTrue(b_needs_a.threadMemo.get().isEmpty());
+        assertTrue(c_needs_b.threadMemo.get().isEmpty());
     }
 }

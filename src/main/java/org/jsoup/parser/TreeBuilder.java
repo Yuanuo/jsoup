@@ -77,8 +77,8 @@ abstract class TreeBuilder {
         return doc;
     }
 
-    List<Node> parseFragment(String inputFragment, @Nullable Element context, String baseUri, Parser parser) {
-        initialiseParse(new StringReader(inputFragment), baseUri, parser);
+    List<Node> parseFragment(Reader inputFragment, @Nullable Element context, String baseUri, Parser parser) {
+        initialiseParse(inputFragment, baseUri, parser);
         initialiseParseFragment(context);
         runParser();
         return completeParseFragment();
@@ -238,19 +238,15 @@ abstract class TreeBuilder {
         return false;
     }
 
-    Tag tagFor(String tagName, String namespace, ParseSettings settings) {
+    Tag tagFor(String tagName, String normalName, String namespace, ParseSettings settings) {
         Tag cached = seenTags.get(tagName); // note that we don't normalize the cache key. But tag via valueOf may be normalized.
         if (cached == null || !cached.namespace().equals(namespace)) {
             // only return from cache if the namespace is the same. not running nested cache to save double hit on the common flow
-            Tag tag = Tag.valueOf(tagName, namespace, settings);
+            Tag tag = Tag.valueOf(tagName, normalName, namespace, settings);
             seenTags.put(tagName, tag);
             return tag;
         }
         return cached;
-    }
-
-    Tag tagFor(String tagName, ParseSettings settings) {
-        return tagFor(tagName, defaultNamespace(), settings);
     }
 
     /**

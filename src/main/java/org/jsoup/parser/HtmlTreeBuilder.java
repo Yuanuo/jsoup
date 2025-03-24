@@ -15,35 +15,45 @@ import org.jsoup.nodes.TextNode;
 import org.jspecify.annotations.Nullable;
 
 import java.io.Reader;
-import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.jsoup.internal.StringUtil.inSorted;
 import static org.jsoup.parser.HtmlTreeBuilderState.Constants.InTableFoster;
 import static org.jsoup.parser.HtmlTreeBuilderState.ForeignContent;
-import static org.jsoup.parser.Parser.NamespaceHtml;
+import static org.jsoup.parser.Parser.*;
 
 /**
  * HTML Tree Builder; creates a DOM from Tokens.
  */
 public class HtmlTreeBuilder extends TreeBuilder {
     // tag searches. must be sorted, used in inSorted. HtmlTreeBuilderTest validates they're sorted.
-    static final String[] TagsSearchInScope = new String[]{"applet", "caption", "html", "marquee", "object", "table", "td", "th"};
+    static final String[] TagsSearchInScope = new String[]{ // a particular element in scope
+        "applet", "caption", "html", "marquee", "object", "table", "td", "template", "th"
+    };
+    // math and svg namespaces for particular element in scope
+    static final String[]TagSearchInScopeMath = new String[] {
+        "annotation-xml",  "mi", "mn", "mo", "ms", "mtext"
+    };
+    static final String[]TagSearchInScopeSvg = new String[] {
+        "desc", "foreignObject", "title"
+    };
+
     static final String[] TagSearchList = new String[]{"ol", "ul"};
     static final String[] TagSearchButton = new String[]{"button"};
     static final String[] TagSearchTableScope = new String[]{"html", "table"};
     static final String[] TagSearchSelectScope = new String[]{"optgroup", "option"};
     static final String[] TagSearchEndTags = new String[]{"dd", "dt", "li", "optgroup", "option", "p", "rb", "rp", "rt", "rtc"};
     static final String[] TagThoroughSearchEndTags = new String[]{"caption", "colgroup", "dd", "dt", "li", "optgroup", "option", "p", "rb", "rp", "rt", "rtc", "tbody", "td", "tfoot", "th", "thead", "tr"};
-    static final String[] TagSearchSpecial = new String[]{"address", "applet", "area", "article", "aside", "base", "basefont", "bgsound",
-        "blockquote", "body", "br", "button", "caption", "center", "col", "colgroup", "command", "dd",
-        "details", "dir", "div", "dl", "dt", "embed", "fieldset", "figcaption", "figure", "footer", "form",
-        "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hgroup", "hr", "html",
-        "iframe", "img", "input", "isindex", "li", "link", "listing", "marquee", "menu", "meta", "nav",
-        "noembed", "noframes", "noscript", "object", "ol", "p", "param", "plaintext", "pre", "script",
-        "section", "select", "style", "summary", "table", "tbody", "td", "textarea", "tfoot", "th", "thead",
-        "title", "tr", "ul", "wbr", "xmp"};
+    static final String[] TagSearchSpecial = new String[]{
+        "address", "applet", "area", "article", "aside", "base", "basefont", "bgsound", "blockquote", "body", "br",
+        "button", "caption", "center", "col", "colgroup", "dd", "details", "dir", "div", "dl", "dt", "embed",
+        "fieldset", "figcaption", "figure", "footer", "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6",
+        "head", "header", "hgroup", "hr", "html", "iframe", "img", "input", "keygen", "li", "link", "listing", "main",
+        "marquee", "menu", "meta", "nav", "noembed", "noframes", "noscript", "object", "ol", "p", "param", "plaintext",
+        "pre", "script", "search", "section", "select", "source", "style", "summary", "table", "tbody", "td",
+        "template", "textarea", "tfoot", "th", "thead", "title", "tr", "track", "ul", "wbr", "xmp"};
+    static String[] TagSearchSpecialMath = {"annotation-xml", "mi", "mn", "mo", "ms", "mtext"}; // differs to MathML text integration point; adds annotation-xml
     static final String[] TagMathMlTextIntegration = new String[]{"mi", "mn", "mo", "ms", "mtext"};
     static final String[] TagSvgHtmlIntegration = new String[]{"desc", "foreignObject", "title"};
 
@@ -56,7 +66,7 @@ public class HtmlTreeBuilder extends TreeBuilder {
     private @Nullable Element headElement; // the current head element
     private @Nullable FormElement formElement; // the current form element
     private @Nullable Element contextElement; // fragment parse root; name only copy of context. could be null even if fragment parsing
-    private ArrayList<Element> formattingElements; // active (open) formatting elements
+    ArrayList<Element> formattingElements; // active (open) formatting elements
     private ArrayList<HtmlTreeBuilderState> tmplInsertMode; // stack of Template Insertion modes
     private List<Token.Character> pendingTableCharacters; // chars in table to be shifted out
     private Token.EndTag emptyEnd; // reused empty end tag
@@ -101,7 +111,7 @@ public class HtmlTreeBuilder extends TreeBuilder {
 
         if (context != null) {
             final String contextName = context.normalName();
-            contextElement = new Element(tagFor(contextName, settings), baseUri);
+            contextElement = new Element(tagFor(contextName, contextName, defaultNamespace(), settings), baseUri);
             if (context.ownerDocument() != null) // quirks setup:
                 doc.quirksMode(context.ownerDocument().quirksMode());
 
@@ -234,11 +244,8 @@ public class HtmlTreeBuilder extends TreeBuilder {
             if (encoding.equals("text/html") || encoding.equals("application/xhtml+xml"))
                 return true;
         }
-        if (Parser.NamespaceSvg.equals(el.tag().namespace())
-            && StringUtil.in(el.tagName(), TagSvgHtmlIntegration)) // note using .tagName for case-sensitive hit here of foreignObject
-            return true;
-
-        return false;
+        // note using .tagName for case-sensitive hit here of foreignObject
+        return Parser.NamespaceSvg.equals(el.tag().namespace()) && StringUtil.in(el.tagName(), TagSvgHtmlIntegration);
     }
 
     boolean process(Token token, HtmlTreeBuilderState state) {
@@ -311,7 +318,7 @@ public class HtmlTreeBuilder extends TreeBuilder {
             }
         }
 
-        Tag tag = tagFor(startTag.tagName, namespace,
+        Tag tag = tagFor(startTag.tagName, startTag.normalName, namespace,
             forcePreserveCase ? ParseSettings.preserveCase : settings);
 
         return (tag.normalName().equals("form")) ?
@@ -539,6 +546,13 @@ public class HtmlTreeBuilder extends TreeBuilder {
         }
     }
 
+    /**
+     Gets the Element immediately above the supplied element on the stack. Which due to adoption, may not necessarily be
+     its parent.
+
+     @param el
+     @return the Element immediately above the supplied element, or null if there is no such element.
+     */
     @Nullable Element aboveOnStack(Element el) {
         assert onStack(el);
         for (int pos = stack.size() -1; pos >= 0; pos--) {
@@ -672,18 +686,24 @@ public class HtmlTreeBuilder extends TreeBuilder {
         final int bottom = stack.size() -1;
         final int top = bottom > MaxScopeSearchDepth ? bottom - MaxScopeSearchDepth : 0;
         // don't walk too far up the tree
-
         for (int pos = bottom; pos >= top; pos--) {
             Element el = stack.get(pos);
-            if (!el.tag().namespace().equals(NamespaceHtml)) continue;
-
-            final String elName = el.normalName();
-            if (inSorted(elName, targetNames))
-                return true;
-            if (inSorted(elName, baseTypes))
-                return false;
-            if (extraTypes != null && inSorted(elName, extraTypes))
-                return false;
+            String elName = el.normalName();
+            // namespace checks - arguments provided are always in html ns, with this bolt-on for math and svg:
+            String ns = el.tag().namespace();
+            if (ns.equals(NamespaceHtml)) {
+                if (inSorted(elName, targetNames))
+                    return true;
+                if (inSorted(elName, baseTypes))
+                    return false;
+                if (extraTypes != null && inSorted(elName, extraTypes))
+                    return false;
+            } else if (baseTypes == TagsSearchInScope) {
+                if (ns.equals(NamespaceMathml) && inSorted(elName, TagSearchInScopeMath))
+                    return false;
+                if (ns.equals(NamespaceSvg) && inSorted(elName, TagSearchInScopeSvg))
+                    return false;
+            }
         }
         //Validate.fail("Should not be reachable"); // would end up false because hitting 'html' at root (basetypes)
         return false;
@@ -822,10 +842,18 @@ public class HtmlTreeBuilder extends TreeBuilder {
     }
 
     static boolean isSpecial(Element el) {
-        // todo: mathml's mi, mo, mn
-        // todo: svg's foreigObject, desc, title
+        String namespace = el.tag().namespace();
         String name = el.normalName();
-        return inSorted(name, TagSearchSpecial);
+        switch (namespace) {
+            case NamespaceHtml:
+                return inSorted(name, TagSearchSpecial);
+            case Parser.NamespaceMathml:
+                return inSorted(name, TagSearchSpecialMath);
+            case Parser.NamespaceSvg:
+                return inSorted(name, TagSvgHtmlIntegration);
+            default:
+                return false;
+        }
     }
 
     Element lastFormattingElement() {
@@ -920,7 +948,7 @@ public class HtmlTreeBuilder extends TreeBuilder {
 
             // 8. create new element from element, 9 insert into current node, onto stack
             skip = false; // can only skip increment from 4.
-            Element newEl = new Element(tagFor(entry.normalName(), settings), null, entry.attributes().clone());
+            Element newEl = new Element(tagFor(entry.nodeName(), entry.normalName(), defaultNamespace(), settings), null, entry.attributes().clone());
             doInsertElement(newEl, null);
 
             // 10. replace entry with new entry

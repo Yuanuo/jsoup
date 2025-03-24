@@ -18,6 +18,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +27,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
+import static org.jsoup.nodes.NodeIteratorTest.assertIterates;
+import static org.jsoup.nodes.NodeIteratorTest.trackSeen;
 import static org.jsoup.select.SelectorTest.assertSelectedOwnText;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -2589,6 +2592,28 @@ public class ElementTest {
         assertEquals("div", el.cssSelector());
     }
 
+    @Test void cssSelectorParentWithId() {
+        // https://github.com/jhy/jsoup/issues/2282
+        Document doc = Jsoup.parse("<div><div id=id1><p>A</p></div><div><p>B</p></div><div class='c1 c2'><p>C</p></div></div>");
+        Elements els = doc.select("p");
+        Element pA = els.get(0);
+        Element pB = els.get(1);
+        Element pC = els.get(2);
+        assertEquals("#id1 > p", pA.cssSelector());
+        assertEquals("html > body > div > div:nth-child(2) > p", pB.cssSelector());
+        assertEquals("html > body > div > div.c1.c2 > p", pC.cssSelector());
+    }
+
+    @Test void cssSelectorWithNonUniqueId() {
+        Document doc = Jsoup.parse("<main id=out><div><div id=in>One</div><div id=in>Two</div></div></main>");
+        Element two = doc.expectFirst("div:containsOwn(Two)");
+        String selector = two.cssSelector();
+        assertEquals("#out > div > div:nth-child(2)", selector);
+        Elements found = doc.select(selector);
+        assertEquals(1, found.size());
+        assertEquals(two, found.first());
+    }
+
     @Test void cssSelectorDoesntStackOverflow() {
         // https://github.com/jhy/jsoup/issues/2001
         Element element = new Element("element");
@@ -2980,5 +3005,107 @@ public class ElementTest {
 
         assertEquals("<p CLASS=\"YES\">One</p>", p.outerHtml());
         assertEquals("CLASS=\"YES\"", attr.html());
+    }
+
+    @Test void testSelectStream() {
+        Document doc = Jsoup.parse("<div>Hello world</div>");
+        Element div = doc.select("div").stream().findFirst().orElse(null);
+
+        assertEquals("Hello world", div.text());
+
+        div = doc.selectStream("div").findFirst().orElse(null);
+
+        assertEquals("Hello world", div.text());
+    }
+
+    @Test void elementIsIterable() {
+        Document doc = Jsoup.parse("<div><a id=1>One</a> Two <a id=2>Three<b>Four</a><a id=3>Five</a></div>");
+        String expect = "div;a#1;a#2;b;b;a#3;"; // elements only, in doc order
+        Element div = doc.expectFirst("div");
+
+        // for each pattern
+        StringBuilder seen = new StringBuilder();
+        for (Element el: div) {
+            trackSeen(el, seen);
+        }
+        assertEquals(expect, seen.toString());
+
+        // iterator
+        seen = new StringBuilder();
+        Iterator<Element> iterator = div.iterator();
+        assertIterates(iterator, expect);
+    }
+
+    @Test void htmlToXmlNormalizes() {
+        // https://github.com/jhy/jsoup/issues/1496
+        String in = "<p\u226F\u0322>One</p\u226F\u0322>";
+        Document doc = Jsoup.parse(in);
+        doc.outputSettings().prettyPrint(false);
+        String html = doc.body().html();
+        doc.outputSettings().syntax(Document.OutputSettings.Syntax.xml);
+        String xml = doc.body().html();
+        assertEquals("<p≯̢>One</p≯̢>", html);
+        assertEquals("<p_>One</p_>", xml);
+    }
+
+    @Test
+    public void invalidCharactersDiscardedInXml() {
+        // https://github.com/jhy/jsoup/issues/1743
+        String invalid = "AAA&#xc;BBB\fCCC\uFFFE\uFFFFDDD";
+        Document doc = Jsoup.parseBodyFragment(invalid);
+        doc.outputSettings().syntax(Document.OutputSettings.Syntax.xml).prettyPrint(false);
+        String cleaned = doc.body().html();
+        assertFalse(cleaned.contains("\f"));
+        assertFalse(cleaned.contains("&#xc;"));
+        assertFalse(cleaned.contains("\uFFFE"));
+        assertFalse(cleaned.contains("\uFFFF"));
+        assertTrue(cleaned.matches("AAA *BBB *CCC *DDD"));
+    }
+
+    @Test
+    public void asList() {
+        // supports https://github.com/jhy/jsoup/issues/2100
+        Document doc = Jsoup.parse("<p id=1>One</p><p>Two</p><p>Three</p>");
+        Elements els = doc.select("p");
+        ArrayList<Element> list = els.asList();
+        assertEquals(els.size(), list.size());
+
+        // does not modify backing DOM
+        list.remove(0);
+        assertEquals(3, els.size());
+        assertEquals(2, list.size());
+
+        Element el = doc.expectFirst("#1");
+        assertSame(doc, el.ownerDocument());
+    }
+
+    @Test
+    public void deselect() {
+        // supports https://github.com/jhy/jsoup/issues/2100
+        Document doc = Jsoup.parse("<div><p>One</p><p>Two</p><p>Three</p></div>");
+        Elements els = doc.select("p");
+        Element parent = doc.expectFirst("div");
+
+        Element removedByIndex = els.deselect(1);
+        assertEquals("Two", removedByIndex.text());
+        assertEquals(2, els.size());
+        assertEquals(3, parent.childrenSize());
+
+        Element toRemove = doc.expectFirst("p:contains(Three)");
+        boolean removedByObject = els.deselect(toRemove);
+        assertTrue(removedByObject);
+        assertEquals(1, els.size());
+        assertEquals(3, parent.childrenSize());
+    }
+
+    @Test
+    public void deselectAll() {
+        Document doc = Jsoup.parse("<div><p>One</p><p>Two</p><p>Three</p></div>");
+        Elements els = doc.select("p");
+        Element parent = doc.expectFirst("div");
+
+        els.deselectAll();
+        assertEquals(0, els.size());
+        assertEquals(3, parent.childrenSize());
     }
 }

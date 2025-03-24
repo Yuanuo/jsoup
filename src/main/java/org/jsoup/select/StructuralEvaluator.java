@@ -33,6 +33,7 @@ abstract class StructuralEvaluator extends Evaluator {
 
     @Override protected void reset() {
         threadMemo.get().clear();
+        evaluator.reset();
         super.reset();
     }
 
@@ -151,8 +152,11 @@ abstract class StructuralEvaluator extends Evaluator {
         }
     }
 
-    static class Parent extends StructuralEvaluator {
-        public Parent(Evaluator evaluator) {
+    /**
+     Any Ancestor (i.e., ascending parent chain.).
+     */
+    static class Ancestor extends StructuralEvaluator {
+        public Ancestor(Evaluator evaluator) {
             super(evaluator);
         }
 
@@ -171,7 +175,7 @@ abstract class StructuralEvaluator extends Evaluator {
         }
 
         @Override protected int cost() {
-            return 2 * evaluator.cost();
+            return 8 * evaluator.cost(); // probably lower than has(), but still significant, depending on doc and el depth.
         }
 
         @Override
@@ -216,6 +220,14 @@ abstract class StructuralEvaluator extends Evaluator {
 
         @Override protected int cost() {
             return cost;
+        }
+
+        @Override
+        protected void reset() {
+            for (Evaluator evaluator : evaluators) {
+                evaluator.reset();
+            }
+            super.reset();
         }
 
         @Override

@@ -15,6 +15,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -459,10 +460,7 @@ public class HtmlParserTest {
 
     @Test public void parseBodyIsIndexNoAttributes() {
         // https://github.com/jhy/jsoup/issues/1404
-        String expectedHtml = "<form>\n" +
-            " <hr><label>This is a searchable index. Enter search keywords: <input name=\"isindex\"></label>\n" +
-            " <hr>\n" +
-            "</form>";
+        String expectedHtml = "<isindex></isindex>";
         Document doc = Jsoup.parse("<isindex>");
         assertEquals(expectedHtml, doc.body().html());
 
@@ -675,8 +673,10 @@ public class HtmlParserTest {
     }
 
     @Test public void handlesMisnestedAInDivs() {
-        String h = "<a href='#1'><div><div><a href='#2'>child</a></div</div></a>";
-        String w = "<a href=\"#1\"></a> <div> <a href=\"#1\"></a> <div> <a href=\"#1\"></a><a href=\"#2\">child</a> </div> </div>";
+        String h = "<a 1><div 2><div 3><a 4>child</a></div></div></a>";
+        String w = "<a 1></a> <div 2> <a 1=\"\"></a> <div 3> <a 1=\"\"></a><a 4>child</a> </div> </div>"; // chrome checked
+        // todo - come back to how we copy the attributes, to keep boolean setting (not ="")
+
         Document doc = Jsoup.parse(h);
         assertEquals(
             StringUtil.normaliseWhitespace(w),
@@ -1067,8 +1067,8 @@ public class HtmlParserTest {
 
     @Test public void testNormalisesIsIndex() {
         Document doc = Jsoup.parse("<body><isindex action='/submit'></body>");
-        String html = doc.outerHtml();
-        assertEquals("<form action=\"/submit\"> <hr><label>This is a searchable index. Enter search keywords: <input name=\"isindex\"></label> <hr> </form>",
+        // There used to be rules so this became: <form action="/submit"> <hr><label>This is a searchable index. Enter search keywords: <input name="isindex"></label> <hr> </form>
+        assertEquals("<isindex action=\"/submit\"></isindex>",
             StringUtil.normaliseWhitespace(doc.body().html()));
     }
 
@@ -1511,6 +1511,13 @@ public class HtmlParserTest {
         assertEquals("<a> <b> </b></a><b><div><a> </a><a>test</a></div></b>", TextUtil.stripNewlines(doc.body().html()));
     }
 
+    @Test public void adoption() throws IOException {
+        // https://github.com/jhy/jsoup/issues/2267
+        File input = ParseTest.getFile("/htmltests/adopt-1.html");
+        Document doc = Jsoup.parse(input);
+        assertEquals("TEXT-AAA TEXT-BBB TEXT-CCC TEXT-DDD", doc.text());
+    }
+
     @Test public void tagsMustStartWithAscii() {
         // https://github.com/jhy/jsoup/issues/1006
         String[] valid = {"a一", "a会员挂单金额5", "table(╯°□°)╯"};
@@ -1639,7 +1646,7 @@ public class HtmlParserTest {
         // https://github.com/jhy/jsoup/issues/1637 | https://bugs.chromium.org/p/oss-fuzz/issues/detail?id=38987
         Document doc = Jsoup.parse("<template><isindex action>");
         assertNotNull(doc);
-        assertEquals("<template><form><hr><label>This is a searchable index. Enter search keywords: <input name=\"isindex\"></label><hr></form></template>",
+        assertEquals("<template><isindex action></isindex></template>",
             TextUtil.stripNewlines(doc.head().html()));
     }
 
@@ -1653,6 +1660,21 @@ public class HtmlParserTest {
         assertNotNull(doc);
         assertEquals("<template><select></select><input></template>",
             TextUtil.stripNewlines(doc.head().html()));
+    }
+
+    @Test void templateInLi() {
+        // https://github.com/jhy/jsoup/issues/2258
+        String html = "<ul><li>L1</li><li>L2 <template><li>T1</li><li>T2</template></li><li>L3</ul>";
+        Document doc = Jsoup.parse(html);
+        assertEquals("<ul><li>L1</li><li>L2 <template><li>T1</li><li>T2</li></template></li><li>L3</li></ul>",
+            TextUtil.stripNewlines(doc.body().html()));
+    }
+
+    @Test void templateInButton() {
+        // https://github.com/jhy/jsoup/issues/2271
+        String html = "<button><template><button></button></template></button>";
+        Document doc = Jsoup.parse(html);
+        assertEquals(html, TextUtil.stripNewlines(doc.body().html()));
     }
 
     @Test void errorsBeforeHtml() {
@@ -1961,5 +1983,14 @@ public class HtmlParserTest {
         assertNotNull(div.attribute("<!--"));
         assertEquals("hidden", div.attr("id"));
         assertNotNull(div.attribute("--"));
+    }
+
+    @Test void nullStreamReturnsEmptyDoc() throws IOException {
+        // https://github.com/jhy/jsoup/issues/2252
+        InputStream stream = null;
+        Document doc = Jsoup.parse(stream, null, "");
+        // don't want to mark parse(stream) as @Nullable, as it's more useful to show the warning. But support it, for backwards compat
+        assertNotNull(doc);
+        assertEquals("", doc.title());
     }
 }

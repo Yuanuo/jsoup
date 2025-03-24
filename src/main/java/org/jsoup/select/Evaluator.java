@@ -22,7 +22,10 @@ import static org.jsoup.internal.StringUtil.normaliseWhitespace;
 
 
 /**
- * Evaluates that an element matches the selector.
+ An Evaluator tests if an element meets the selector's requirements. Obtain an evaluator for a given CSS selector
+ with {@link QueryParser#parse}. If you are executing the same selector on many elements (or documents), it
+ can be more efficient to compile and reuse an Evaluator than to reparse the selector on each invocation of select().
+ <p>Evaluators are thread-safe and may be used concurrently across multiple documents.</p>
  */
 public abstract class Evaluator {
     protected Evaluator() {
@@ -104,7 +107,7 @@ public abstract class Evaluator {
 
         @Override
         public String toString() {
-            return String.format("%s", tagName);
+            return String.format("%s|*", tagName);
         }
     }
 
@@ -126,7 +129,7 @@ public abstract class Evaluator {
 
         @Override
         public String toString() {
-            return String.format("%s", tagName);
+            return String.format("*|%s", tagName);
         }
     }
 
@@ -170,7 +173,7 @@ public abstract class Evaluator {
         }
 
         @Override protected int cost() {
-            return 6; // does whitespace scanning
+            return 8; // does whitespace scanning; more than .contains()
         }
 
         @Override
@@ -527,38 +530,43 @@ public abstract class Evaluator {
 
 
     public static abstract class CssNthEvaluator extends Evaluator {
-    	protected final int a, b;
+        /** Step */
+        protected final int a;
+        /** Offset */
+        protected final int b;
 
-    	public CssNthEvaluator(int a, int b) {
-    		this.a = a;
-    		this.b = b;
-    	}
-    	public CssNthEvaluator(int b) {
-    		this(0,b);
-    	}
+        public CssNthEvaluator(int step, int offset) {
+            this.a = step;
+            this.b = offset;
+        }
 
-    	@Override
-    	public boolean matches(Element root, Element element) {
-    		final Element p = element.parent();
-    		if (p == null || (p instanceof Document)) return false;
+        public CssNthEvaluator(int offset) {
+            this(0, offset);
+        }
 
-    		final int pos = calculatePosition(root, element);
-    		if (a == 0) return pos == b;
+        @Override
+        public boolean matches(Element root, Element element) {
+            final Element p = element.parent();
+            if (p == null || (p instanceof Document)) return false;
 
-    		return (pos-b)*a >= 0 && (pos-b)%a==0;
-    	}
+            final int pos = calculatePosition(root, element);
+            if (a == 0) return pos == b;
 
-		@Override
-		public String toString() {
-			if (a == 0)
-				return String.format(":%s(%d)",getPseudoClass(), b);
-			if (b == 0)
-				return String.format(":%s(%dn)",getPseudoClass(), a);
-			return String.format(":%s(%dn%+d)", getPseudoClass(),a, b);
-		}
+            return (pos - b) * a >= 0 && (pos - b) % a == 0;
+        }
 
-		protected abstract String getPseudoClass();
-		protected abstract int calculatePosition(Element root, Element element);
+        @Override
+        public String toString() {
+            String format =
+                (a == 0) ? ":%s(%3$d)"    // only offset (b)
+                : (b == 0) ? ":%s(%2$dn)" // only step (a)
+                : ":%s(%2$dn%3$+d)";      // step, offset
+            return String.format(format, getPseudoClass(), a, b);
+        }
+
+        protected abstract String getPseudoClass();
+
+        protected abstract int calculatePosition(Element root, Element element);
     }
 
 
@@ -568,19 +576,19 @@ public abstract class Evaluator {
      * @see IndexEquals
      */
     public static final class IsNthChild extends CssNthEvaluator {
+        public IsNthChild(int step, int offset) {
+            super(step, offset);
+        }
 
-    	public IsNthChild(int a, int b) {
-    		super(a,b);
-		}
+        @Override
+        protected int calculatePosition(Element root, Element element) {
+            return element.elementSiblingIndex() + 1;
+        }
 
-		@Override protected int calculatePosition(Element root, Element element) {
-			return element.elementSiblingIndex()+1;
-		}
-
-
-		@Override protected String getPseudoClass() {
-			return "nth-child";
-		}
+        @Override
+        protected String getPseudoClass() {
+            return "nth-child";
+        }
     }
 
     /**
@@ -589,9 +597,9 @@ public abstract class Evaluator {
      * @see IndexEquals
      */
     public static final class IsNthLastChild extends CssNthEvaluator {
-    	public IsNthLastChild(int a, int b) {
-    		super(a,b);
-    	}
+        public IsNthLastChild(int step, int offset) {
+            super(step, offset);
+        }
 
         @Override
         protected int calculatePosition(Element root, Element element) {
@@ -611,8 +619,8 @@ public abstract class Evaluator {
      *
      */
     public static class IsNthOfType extends CssNthEvaluator {
-        public IsNthOfType(int a, int b) {
-            super(a, b);
+        public IsNthOfType(int step, int offset) {
+            super(step, offset);
         }
 
         @Override protected int calculatePosition(Element root, Element element) {
@@ -637,9 +645,8 @@ public abstract class Evaluator {
     }
 
     public static class IsNthLastOfType extends CssNthEvaluator {
-
-        public IsNthLastOfType(int a, int b) {
-            super(a, b);
+        public IsNthLastOfType(int step, int offset) {
+            super(step, offset);
         }
 
         @Override

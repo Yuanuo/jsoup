@@ -1,5 +1,9 @@
 package org.jsoup.internal;
 
+import org.jsoup.nodes.Attribute;
+import org.jsoup.nodes.Document;
+import org.jspecify.annotations.Nullable;
+
 import java.util.Locale;
 
 /**
@@ -20,5 +24,10 @@ public final class Normalizer {
     /** If a string literal, just lower case the string; otherwise lower-case and trim. */
     public static String normalize(final String input, boolean isStringLiteral) {
         return isStringLiteral ? lowerCase(input) : normalize(input);
+    }
+
+    /** Minimal helper to get an otherwise OK HTML name like "foo<bar" to "foo_bar". */
+    @Nullable public static String xmlSafeTagName(final String tagname) {
+        return Attribute.getValidKey(tagname, Document.OutputSettings.Syntax.xml); // Reuses the Attribute key normal, which is same for xml tag names
     }
 }

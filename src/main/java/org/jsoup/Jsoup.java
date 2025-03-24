@@ -15,6 +15,8 @@ import java.io.InputStream;
 import java.net.URL;
 import java.nio.file.Path;
 
+import static org.jsoup.internal.SharedConstants.DummyUri;
+
 /**
  The core public access point to the jsoup functionality.
 
@@ -259,7 +261,7 @@ Connection con3 = session.newRequest();
      @param baseUri     The URL where the HTML was retrieved from, to resolve relative links against.
      @return sane HTML
 
-     @throws IOException if the file could not be found, or read, or if the charsetName is invalid.
+     @throws IOException if the stream could not be read, or if the charsetName is invalid.
      */
     public static Document parse(InputStream in, @Nullable String charsetName, String baseUri) throws IOException {
         return DataUtil.load(in, charsetName, baseUri);
@@ -276,7 +278,7 @@ Connection con3 = session.newRequest();
      @param parser alternate {@link Parser#xmlParser() parser} to use.
      @return sane HTML
 
-     @throws IOException if the file could not be found, or read, or if the charsetName is invalid.
+     @throws IOException if the stream could not be read, or if the charsetName is invalid.
      */
     public static Document parse(InputStream in, @Nullable String charsetName, String baseUri, Parser parser) throws IOException {
         return DataUtil.load(in, charsetName, baseUri, parser);
@@ -342,6 +344,10 @@ Connection con3 = session.newRequest();
      @see Cleaner#clean(Document)
      */
     public static String clean(String bodyHtml, String baseUri, Safelist safelist) {
+        if (baseUri.isEmpty() && safelist.preserveRelativeLinks()) {
+            baseUri = DummyUri; // set a placeholder URI to allow relative links to pass abs resolution for protocol tests; won't leak to output
+        }
+
         Document dirty = parseBodyFragment(bodyHtml, baseUri);
         Cleaner cleaner = new Cleaner(safelist);
         Document clean = cleaner.clean(dirty);

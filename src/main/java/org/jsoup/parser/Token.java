@@ -6,12 +6,6 @@ import org.jsoup.nodes.Attributes;
 import org.jsoup.nodes.Range;
 import org.jspecify.annotations.Nullable;
 
-import java.util.HashMap;
-import java.util.Map;
-
-import static org.jsoup.internal.SharedConstants.*;
-
-
 /**
  * Parse tokens for the Tokeniser.
  */
@@ -264,7 +258,9 @@ abstract class Token {
             // might have null chars - need to replace with null replacement character
             append = append.replace(TokeniserState.nullChar, Tokeniser.replacementChar);
             tagName = tagName == null ? append : tagName.concat(append);
-            normalName = ParseSettings.normalName(tagName);
+            // perf: normalize just the appended content
+            String normalAppend = ParseSettings.normalName(append);
+            normalName = normalName == null ? normalAppend : normalName.concat(normalAppend);
         }
 
         final void appendTagName(char append) {
@@ -487,6 +483,34 @@ abstract class Token {
 
     }
 
+    /**
+     XmlDeclaration - extends Tag for pseudo attribute support
+     */
+    final static class XmlDecl extends Tag {
+        boolean isDeclaration = true; // <!..>, or <?...?> if false (a processing instruction)
+
+        public XmlDecl(TreeBuilder treeBuilder) {
+            super(TokenType.XmlDecl, treeBuilder);
+        }
+
+        @Override
+        XmlDecl reset() {
+            super.reset();
+            isDeclaration = true;
+            return this;
+        }
+
+        @Override
+        public String toString() {
+            String open = isDeclaration ? "<!" : "<?";
+            String close = isDeclaration ? ">" : "?>";
+            if (hasAttributes() && attributes.size() > 0)
+                return open + toStringName() + " " + attributes.toString() + close;
+            else
+                return open + toStringName() + close;
+        }
+    }
+
     final static class EOF extends Token {
         EOF() {
             super(Token.TokenType.EOF);
@@ -548,6 +572,10 @@ abstract class Token {
         return (Character) this;
     }
 
+    final XmlDecl asXmlDecl() {
+        return (XmlDecl) this;
+    }
+
     final boolean isEOF() {
         return type == TokenType.EOF;
     }
@@ -558,6 +586,7 @@ abstract class Token {
         EndTag,
         Comment,
         Character, // note no CData - treated in builder as an extension of Character
+        XmlDecl,
         EOF
     }
 }

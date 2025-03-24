@@ -1,5 +1,6 @@
 package org.jsoup.helper;
 
+import org.jsoup.internal.Normalizer;
 import org.jsoup.internal.StringUtil;
 import org.jsoup.nodes.Attribute;
 import org.jsoup.nodes.Attributes;
@@ -34,12 +35,12 @@ import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
 import javax.xml.xpath.XPathFactoryConfigurationException;
 import java.io.StringWriter;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.Stack;
 
 import static javax.xml.transform.OutputKeys.METHOD;
 import static org.jsoup.nodes.Document.OutputSettings.Syntax;
@@ -113,7 +114,6 @@ public class W3CDom {
      * @see #OutputXml
      * @see OutputKeys#ENCODING
      * @see OutputKeys#OMIT_XML_DECLARATION
-     * @see OutputKeys#STANDALONE
      * @see OutputKeys#STANDALONE
      * @see OutputKeys#DOCTYPE_PUBLIC
      * @see OutputKeys#CDATA_SECTION_ELEMENTS
@@ -330,7 +330,8 @@ public class W3CDom {
     }
 
     /**
-     * Serialize a W3C document to a String. The output format will be XML or HTML depending on the content of the doc.
+     * Serialize a W3C document that was created by {@link #fromJsoup(org.jsoup.nodes.Element)} to a String.
+     * The output format will be XML or HTML depending on the content of the doc.
      *
      * @param doc Document
      * @return Document as string
@@ -350,7 +351,7 @@ public class W3CDom {
 
         private final Document doc;
         private boolean namespaceAware = true;
-        private final Stack<HashMap<String, String>> namespacesStack = new Stack<>(); // stack of namespaces, prefix => urn
+        private final ArrayDeque<HashMap<String, String>> namespacesStack = new ArrayDeque<>(); // stack of namespaces, prefix => urn
         private Node dest;
         private Syntax syntax = Syntax.xml; // the syntax (to coerce attributes to). From the input doc if available.
         /*@Nullable*/ private final org.jsoup.nodes.Element contextElement; // todo - unsure why this can't be marked nullable?
@@ -369,6 +370,7 @@ public class W3CDom {
             }
         }
 
+        @Override
         public void head(org.jsoup.nodes.Node source, int depth) {
             namespacesStack.push(new HashMap<>(namespacesStack.peek())); // inherit from above on the stack
             if (source instanceof org.jsoup.nodes.Element) {
@@ -376,12 +378,7 @@ public class W3CDom {
 
                 String prefix = updateNamespaces(sourceEl);
                 String namespace = namespaceAware ? namespacesStack.peek().get(prefix) : null;
-                String tagName = sourceEl.tagName();
-
-                /* Tag names in XML are quite permissive, but less permissive than HTML. Rather than reimplement the validation,
-                we just try to use it as-is. If it fails, insert as a text node instead. We don't try to normalize the
-                tagname to something safe, because that isn't going to be meaningful downstream. This seems(?) to be
-                how browsers handle the situation, also. https://github.com/jhy/jsoup/issues/1093 */
+                String tagName = Normalizer.xmlSafeTagName(sourceEl.tagName());
                 try {
                     // use an empty namespace if none is present but the tag name has a prefix
                     String imputedNamespace = namespace == null && tagName.contains(":") ? "" : namespace;
@@ -392,6 +389,7 @@ public class W3CDom {
                         doc.setUserData(ContextNodeProperty, el, null);
                     dest = el; // descend
                 } catch (DOMException e) {
+                    // If the Normalize didn't get it XML / W3C safe, inserts as plain text
                     append(doc.createTextNode("<" + tagName + ">"), sourceEl);
                 }
             } else if (source instanceof org.jsoup.nodes.TextNode) {
@@ -416,6 +414,7 @@ public class W3CDom {
             dest.appendChild(append);
         }
 
+        @Override
         public void tail(org.jsoup.nodes.Node source, int depth) {
             if (source instanceof org.jsoup.nodes.Element && dest.getParentNode() instanceof Element) {
                 dest = dest.getParentNode(); // undescend
@@ -425,12 +424,41 @@ public class W3CDom {
 
         private void copyAttributes(org.jsoup.nodes.Node source, Element el) {
             for (Attribute attribute : source.attributes()) {
-                String key = Attribute.getValidKey(attribute.getKey(), syntax);
-                if (key != null) { // null if couldn't be coerced to validity
-                    el.setAttribute(key, attribute.getValue());
+                try {
+                    String key = Attribute.getValidKey(attribute.getKey(), syntax);
+                    if (key != null) {
+                        el.setAttribute(key, attribute.getValue());
+                        addUndeclaredAttrNs(key, el);
+                    }
+                } catch (DOMException e) {
+                    if (syntax != Syntax.xml) {
+                        String key = Attribute.getValidKey(attribute.getKey(), Syntax.xml);
+                        if (key != null) {
+                            el.setAttribute(key, attribute.getValue());
+                            addUndeclaredAttrNs(key, el);
+                        }
+                    }
                 }
             }
         }
+
+        /**
+         Add a namespace declaration for an attribute with a prefix if it is not already present. Ensures that attributes
+         with prefixes have the corresponding namespace declared, E.g. attribute "v-bind:foo" gets another attribute
+         "xmlns:v-bind='undefined'. So that the asString() transformation pass is valid.
+         */
+        private void addUndeclaredAttrNs(String attrKey, Element wEl) {
+            if (!namespaceAware) return;
+            int pos = attrKey.indexOf(':');
+            if (pos > 0) {
+                String prefix = attrKey.substring(0, pos);
+                if (!namespacesStack.peek().containsKey(prefix)) {
+                    wEl.setAttribute("xmlns:" + prefix, undefinedNs);
+                    namespacesStack.peek().put(prefix, undefinedNs);
+                }
+            }
+        }
+        private static final String undefinedNs = "undefined";
 
         /**
          * Finds any namespaces defined in this element. Returns any tag prefix.

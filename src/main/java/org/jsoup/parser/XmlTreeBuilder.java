@@ -11,7 +11,6 @@ import org.jsoup.nodes.LeafNode;
 import org.jsoup.nodes.Node;
 import org.jsoup.nodes.TextNode;
 import org.jsoup.nodes.XmlDeclaration;
-import org.jspecify.annotations.Nullable;
 
 import java.io.Reader;
 import java.io.StringReader;
@@ -65,7 +64,7 @@ public class XmlTreeBuilder extends TreeBuilder {
     protected boolean process(Token token) {
         currentToken = token;
 
-        // start tag, end tag, doctype, comment, character, eof
+        // start tag, end tag, doctype, xmldecl, comment, character, eof
         switch (token.type) {
             case StartTag:
                 insertElementFor(token.asStartTag());
@@ -82,6 +81,9 @@ public class XmlTreeBuilder extends TreeBuilder {
             case Doctype:
                 insertDoctypeFor(token.asDoctype());
                 break;
+            case XmlDecl:
+                insertXmlDeclarationFor(token.asXmlDecl());
+                break;
             case EOF: // could put some normalisation here if desired
                 break;
             default:
@@ -91,7 +93,7 @@ public class XmlTreeBuilder extends TreeBuilder {
     }
 
     void insertElementFor(Token.StartTag startTag) {
-        Tag tag = tagFor(startTag.name(), settings);
+        Tag tag = tagFor(startTag.name(), startTag.normalName(), defaultNamespace(), settings);
         if (startTag.attributes != null)
             startTag.attributes.deduplicate(settings);
 
@@ -133,6 +135,12 @@ public class XmlTreeBuilder extends TreeBuilder {
         DocumentType doctypeNode = new DocumentType(settings.normalizeTag(token.getName()), token.getPublicIdentifier(), token.getSystemIdentifier());
         doctypeNode.setPubSysKey(token.getPubSysKey());
         insertLeafNode(doctypeNode);
+    }
+
+    void insertXmlDeclarationFor(Token.XmlDecl token) {
+        XmlDeclaration decl = new XmlDeclaration(token.name(), token.isDeclaration);
+        if (token.attributes != null) decl.attributes().addAll(token.attributes);
+        insertLeafNode(decl);
     }
 
     /**

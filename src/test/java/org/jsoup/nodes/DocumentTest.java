@@ -109,9 +109,14 @@ public class DocumentTest {
     @Test public void testClone() {
         Document doc = Jsoup.parse("<title>Hello</title> <p>One<p>Two");
         Document clone = doc.clone();
+        assertNotSame(doc, clone);
+        assertTrue(doc.hasSameValue(clone));
+        assertNotSame(doc.parser(), clone.parser());
+        assertNotSame(doc.outputSettings(), clone.outputSettings());
 
         assertEquals("<html><head><title>Hello</title></head><body><p>One</p><p>Two</p></body></html>", TextUtil.stripNewlines(clone.html()));
         clone.title("Hello there");
+        assertFalse(doc.hasSameValue(clone));
         clone.expectFirst("p").text("One more").attr("id", "1");
         assertEquals("<html><head><title>Hello there</title></head><body><p id=\"1\">One more</p><p>Two</p></body></html>", TextUtil.stripNewlines(clone.html()));
         assertEquals("<html><head><title>Hello</title></head><body><p>One</p><p>Two</p></body></html>", TextUtil.stripNewlines(doc.html()));
@@ -227,7 +232,6 @@ public class DocumentTest {
     @Test
     public void testMetaCharsetUpdateUtf8() {
         final Document doc = createHtmlDocument("changeThis");
-        doc.updateMetaCharsetElement(true);
         doc.charset(Charset.forName(charsetUtf8));
 
         final String htmlCharsetUTF8 = "<html>\n" +
@@ -247,7 +251,6 @@ public class DocumentTest {
     @Test
     public void testMetaCharsetUpdateIso8859() {
         final Document doc = createHtmlDocument("changeThis");
-        doc.updateMetaCharsetElement(true);
         doc.charset(Charset.forName(charsetIso8859));
 
         final String htmlCharsetISO = "<html>\n" +
@@ -267,7 +270,6 @@ public class DocumentTest {
     @Test
     public void testMetaCharsetUpdateNoCharset() {
         final Document docNoCharset = Document.createShell("");
-        docNoCharset.updateMetaCharsetElement(true);
         docNoCharset.charset(Charset.forName(charsetUtf8));
 
         assertEquals(charsetUtf8, docNoCharset.select("meta[charset]").first().attr("charset"));
@@ -328,7 +330,6 @@ public class DocumentTest {
     @Test
     public void testMetaCharsetUpdateCleanup() {
         final Document doc = createHtmlDocument("dontTouch");
-        doc.updateMetaCharsetElement(true);
         doc.charset(Charset.forName(charsetUtf8));
 
         final String htmlCharsetUTF8 = "<html>\n" +
@@ -344,7 +345,6 @@ public class DocumentTest {
     @Test
     public void testMetaCharsetUpdateXmlUtf8() {
         final Document doc = createXmlDocument("1.0", "changeThis", true);
-        doc.updateMetaCharsetElement(true);
         doc.charset(Charset.forName(charsetUtf8));
 
         final String xmlCharsetUTF8 = "<?xml version=\"1.0\" encoding=\"" + charsetUtf8 + "\"?>\n" +
@@ -362,7 +362,6 @@ public class DocumentTest {
     @Test
     public void testMetaCharsetUpdateXmlIso8859() {
         final Document doc = createXmlDocument("1.0", "changeThis", true);
-        doc.updateMetaCharsetElement(true);
         doc.charset(Charset.forName(charsetIso8859));
 
         final String xmlCharsetISO = "<?xml version=\"1.0\" encoding=\"" + charsetIso8859 + "\"?>\n" +
@@ -380,7 +379,6 @@ public class DocumentTest {
     @Test
     public void testMetaCharsetUpdateXmlNoCharset() {
         final Document doc = createXmlDocument("1.0", "none", false);
-        doc.updateMetaCharsetElement(true);
         doc.charset(Charset.forName(charsetUtf8));
 
         final String xmlCharsetUTF8 = "<?xml version=\"1.0\" encoding=\"" + charsetUtf8 + "\"?>\n" +
@@ -418,12 +416,6 @@ public class DocumentTest {
         assertEquals("dontTouch", selectedNode.attr("version"));
     }
 
-    @Test
-    public void testMetaCharsetUpdatedDisabledPerDefault() {
-        final Document doc = createHtmlDocument("none");
-        assertFalse(doc.updateMetaCharsetElement());
-    }
-
     private Document createHtmlDocument(String charset) {
         final Document doc = Document.createShell("");
         doc.head().appendElement("meta").attr("charset", charset);
@@ -445,6 +437,17 @@ public class DocumentTest {
         }
 
         return doc;
+    }
+
+    @Test void charsetOnEmptyDoc() {
+        Document xml = new Document(Parser.NamespaceXml, "https://example.com"); // no nodes
+        xml.outputSettings().syntax(Syntax.xml);
+        xml.charset(StandardCharsets.UTF_8);
+        assertEquals("<?xml version=\"1.0\" encoding=\"UTF-8\"?>", xml.html());
+
+        Document html = new Document("https://example.com");
+        html.charset(StandardCharsets.UTF_8);
+        assertEquals("<html><head><meta charset=\"UTF-8\"></head></html>", TextUtil.stripNewlines(html.html()));
     }
 
     @Test

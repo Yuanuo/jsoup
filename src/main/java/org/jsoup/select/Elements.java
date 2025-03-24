@@ -52,16 +52,28 @@ public class Elements extends ArrayList<Element> {
      * @return a deep copy
      */
     @Override
-	public Elements clone() {
+    public Elements clone() {
         Elements clone = new Elements(size());
+        for (Element e : this)
+            clone.add(e.clone());
+        return clone;
+    }
 
-        for(Element e : this)
-    		clone.add(e.clone());
-    	
-    	return clone;
-	}
+    /**
+     Convenience method to get the Elements as a plain ArrayList. This allows modification to the list of elements
+     without modifying the source Document. I.e. whereas calling {@code elements.remove(0)} will remove the element from
+     both the Elements and the DOM, {@code elements.asList().remove(0)} will remove the element from the list only.
+     <p>Each Element is still the same DOM connected Element.</p>
 
-	// attribute methods
+     @return a new ArrayList containing the elements in this list
+     @since 1.19.2
+     @see #Elements(List)
+     */
+    public ArrayList<Element> asList() {
+        return new ArrayList<>(this);
+    }
+
+    // attribute methods
     /**
      Get an attribute value from the first matched element that has the attribute.
      @param attributeKey The attribute key.
@@ -453,6 +465,35 @@ public class Elements extends ArrayList<Element> {
     }
 
     /**
+     Find the first Element that matches the {@link Selector} CSS query within this element list.
+     <p>This is effectively the same as calling {@code elements.select(query).first()}, but is more efficient as query
+     execution stops on the first hit.</p>
+
+     @param cssQuery a {@link Selector} query
+     @return the first matching element, or <b>{@code null}</b> if there is no match.
+     @see #expectFirst(String)
+     @since 1.19.1
+     */
+    public @Nullable Element selectFirst(String cssQuery) {
+        return Selector.selectFirst(cssQuery, this);
+    }
+
+    /**
+     Just like {@link #selectFirst(String)}, but if there is no match, throws an {@link IllegalArgumentException}.
+
+     @param cssQuery a {@link Selector} query
+     @return the first matching element
+     @throws IllegalArgumentException if no match is found
+     @since 1.19.1
+     */
+    public Element expectFirst(String cssQuery) {
+        return (Element) Validate.ensureNotNull(
+            Selector.selectFirst(cssQuery, this),
+            "No elements matched the query '%s' in the elements.", cssQuery
+        );
+    }
+
+    /**
      * Remove elements from this list that match the {@link Selector} query.
      * <p>
      * E.g. HTML: {@code <div class=logo>One</div> <div>Two</div>}<br>
@@ -567,10 +608,7 @@ public class Elements extends ArrayList<Element> {
             do {
                 Element sib = next ? e.nextElementSibling() : e.previousElementSibling();
                 if (sib == null) break;
-                if (eval == null)
-                    els.add(sib);
-                else if (sib.is(eval))
-                    els.add(sib);
+                if (eval == null || sib.is(eval)) els.add(sib);
                 e = sib;
             } while (all);
         }
@@ -694,9 +732,10 @@ public class Elements extends ArrayList<Element> {
 
     /**
      Remove the Element at the specified index in this ist, and from the DOM.
-     * @param index the index of the element to be removed
-     * @return the old element at this index
-     * @since 1.17.1
+     @param index the index of the element to be removed
+     @return the old element at this index
+     @see #deselect(int)
+     @since 1.17.1
      */
     @Override public Element remove(int index) {
         Element old = super.remove(index);
@@ -705,10 +744,11 @@ public class Elements extends ArrayList<Element> {
     }
 
     /**
-     Remove the specified Element from this list, and from th DOM
-     * @param o element to be removed from this list, if present
-     * @return if this list contained the Element
-     * @since 1.17.1
+     Remove the specified Element from this list, and from the DOM.
+     @param o element to be removed from this list, if present
+     @return if this list contained the Element
+     @see #deselect(Object)
+     @since 1.17.1
      */
     @Override public boolean remove(Object o) {
         int index = super.indexOf(o);
@@ -721,12 +761,43 @@ public class Elements extends ArrayList<Element> {
     }
 
     /**
+     Remove the Element at the specified index in this list, but not from the DOM.
+     @param index the index of the element to be removed
+     @return the old element at this index
+     @see #remove(int) 
+     @since 1.19.2
+     */
+    public Element deselect(int index) {
+        return super.remove(index);
+    }
+
+    /**
+     Remove the specified Element from this list, but not from the DOM.
+     @param o element to be removed from this list, if present
+     @return if this list contained the Element
+     @see #remove(Object) 
+     @since 1.19.2
+     */
+    public boolean deselect(Object o) {
+        return super.remove(o);
+    }
+
+    /**
      Removes all the elements from this list, and each of them from the DOM.
-     * @since 1.17.1
-     * @see #remove()
+     @since 1.17.1
+     @see #deselectAll()
      */
     @Override public void clear() {
         remove();
+        super.clear();
+    }
+
+    /**
+     Like {@link #clear()}, removes all the elements from this list, but not from the DOM.
+     @see #clear()
+     @since 1.19.2
+     */
+    public void deselectAll() {
         super.clear();
     }
 
