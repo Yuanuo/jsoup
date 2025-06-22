@@ -33,12 +33,14 @@ import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.IllegalCharsetNameException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.Inflater;
@@ -278,6 +280,12 @@ public class HttpConnection implements Connection {
     @Override
     public Connection requestBody(String body) {
         req.requestBody(body);
+        return this;
+    }
+
+    @Override
+    public Connection requestBodyStream(InputStream stream) {
+        req.requestBodyStream(stream);
         return this;
     }
 
@@ -602,7 +610,7 @@ public class HttpConnection implements Connection {
         private int maxBodySizeBytes;
         private boolean followRedirects;
         private final Collection<Connection.KeyVal> data;
-        private @Nullable String body = null;
+        private @Nullable Object body = null; // String or InputStream
         @Nullable String mimeBoundary;
         private boolean ignoreHttpErrors = false;
         private boolean ignoreContentType = false;
@@ -614,7 +622,7 @@ public class HttpConnection implements Connection {
         @Nullable RequestAuthenticator authenticator;
         private @Nullable Progress<Connection.Response> responseProgress;
 
-        private volatile boolean executing = false;
+        private final ReentrantLock executing = new ReentrantLock(); // detects and warns if same request used concurrently
 
         Request() {
             super();
@@ -647,7 +655,6 @@ public class HttpConnection implements Connection {
             cookieManager = copy.cookieManager;
             authenticator = copy.authenticator;
             responseProgress = copy.responseProgress;
-            executing = false;
         }
 
         @Override @Nullable
@@ -754,7 +761,13 @@ public class HttpConnection implements Connection {
 
         @Override @Nullable
         public String requestBody() {
-            return body;
+            return body instanceof String ? (String) body : null;
+        }
+
+        @Override
+        public Connection.Request requestBodyStream(InputStream stream) {
+            body = stream;
+            return this;
         }
 
         @Override
@@ -834,10 +847,7 @@ public class HttpConnection implements Connection {
         }
 
         static Response execute(HttpConnection.Request req, @Nullable Response prevRes) throws IOException {
-            synchronized (req) {
-                Validate.isFalse(req.executing, "Multiple threads were detected trying to execute the same request concurrently. Make sure to use Connection#newRequest() and do not share an executing request between threads.");
-                req.executing = true;
-            }
+            Validate.isTrue(req.executing.tryLock(), "Multiple threads were detected trying to execute the same request concurrently. Make sure to use Connection#newRequest() and do not share an executing request between threads.");
             Validate.notNullParam(req, "req");
             URL url = req.url();
             Validate.notNull(url, "URL must be specified to connect");
@@ -845,7 +855,7 @@ public class HttpConnection implements Connection {
             if (!protocol.equals("http") && !protocol.equals("https"))
                 throw new MalformedURLException("Only http & https protocols supported");
             final boolean supportsBody = req.method().hasBody();
-            final boolean hasBody = req.requestBody() != null;
+            final boolean hasBody = req.body != null;
             if (!supportsBody)
                 Validate.isFalse(hasBody, "Cannot set a request body for HTTP method " + req.method());
 
@@ -877,7 +887,6 @@ public class HttpConnection implements Connection {
                     URL redir = StringUtil.resolve(req.url(), location);
                     req.url(redir);
 
-                    req.executing = false;
                     return execute(req, res);
                 }
                 if ((res.statusCode < 200 || res.statusCode >= 400) && !req.ignoreHttpErrors())
@@ -919,7 +928,7 @@ public class HttpConnection implements Connection {
                 if (res != null) res.safeClose(); // will be non-null if got to conn
                 throw e;
             } finally {
-                req.executing = false;
+                req.executing.unlock();
 
                 // detach any thread local auth delegate
                 if (req.authenticator != null)
@@ -997,24 +1006,45 @@ public class HttpConnection implements Connection {
             return streamer;
         }
 
-        private void prepareByteData() {
+        /**
+         Reads the bodyStream into byteData. A no-op if already executed.
+         */
+        @Override
+        public Connection.Response readFully() throws IOException {
             Validate.isTrue(executed, "Request must be executed (with .execute(), .get(), or .post() before getting response body");
             if (bodyStream != null && byteData == null) {
                 Validate.isFalse(inputStreamRead, "Request has already been read (with .parse())");
                 try {
                     byteData = DataUtil.readToByteBuffer(bodyStream, req.maxBodySize());
-                } catch (IOException e) {
-                    throw new UncheckedIOException(e);
                 } finally {
                     inputStreamRead = true;
                     safeClose();
                 }
             }
+            return this;
+        }
+
+        /**
+         Reads the body, but throws an UncheckedIOException if an IOException occurs.
+         @throws UncheckedIOException if an IOException occurs
+         */
+        private void readByteDataUnchecked() {
+            try {
+                readFully();
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+
+        @Override
+        public String readBody() throws IOException {
+            readFully();
+            return body();
         }
 
         @Override
         public String body() {
-            prepareByteData();
+            readByteDataUnchecked();
             Validate.notNull(byteData);
             // charset gets set from header on execute, and from meta-equiv on parse. parse may not have happened yet
             String body = (charset == null ? UTF_8 : Charset.forName(charset))
@@ -1025,7 +1055,7 @@ public class HttpConnection implements Connection {
 
         @Override
         public byte[] bodyAsBytes() {
-            prepareByteData();
+            readByteDataUnchecked();
             Validate.notNull(byteData);
             Validate.isTrue(byteData.hasArray()); // we made it, so it should
 
@@ -1044,7 +1074,7 @@ public class HttpConnection implements Connection {
 
         @Override
         public Connection.Response bufferUp() {
-            prepareByteData();
+            readByteDataUnchecked();
             return this;
         }
 
@@ -1052,7 +1082,7 @@ public class HttpConnection implements Connection {
         public BufferedInputStream bodyStream() {
             Validate.isTrue(executed, "Request must be executed (with .execute(), .get(), or .post() before getting response body");
 
-            // if we have read to bytes (via buffer up), return those as a stream.
+            // if we have read to bytes (via readFully), return those as a stream.
             if (byteData != null) {
                 return new BufferedInputStream(
                     new ByteArrayInputStream(byteData.array(), 0, byteData.limit()),
@@ -1121,14 +1151,18 @@ public class HttpConnection implements Connection {
         }
 
         /**
-         Servers may encode response headers in UTF-8 instead of RFC defined 8859. This method attempts to detect that
-         and re-decode the string as UTF-8.
+         Servers may encode response headers in UTF-8 instead of RFC defined 8859. The JVM decodes the headers (before we see them) as 8859, which can lead to mojibake data.
+         <p>This method attempts to detect that and re-decode the string as UTF-8.</p>
+         <p>However on Android, the headers will be decoded as UTF8, so we can detect and pass those directly.</p>
          * @param val a header value string that may have been incorrectly decoded as 8859.
          * @return a potentially re-decoded string.
          */
         @Nullable
-        private static String fixHeaderEncoding(@Nullable String val) {
+        static String fixHeaderEncoding(@Nullable String val) {
             if (val == null) return val;
+            // If we can't encode the string as 8859, then it couldn't have been decoded as 8859
+            if (!StandardCharsets.ISO_8859_1.newEncoder().canEncode(val))
+                return val;
             byte[] bytes = val.getBytes(ISO_8859_1);
             if (looksLikeUtf8(bytes))
                 return new String(bytes, UTF_8);
@@ -1205,11 +1239,10 @@ public class HttpConnection implements Connection {
 
         static void writePost(final HttpConnection.Request req, final OutputStream outputStream) throws IOException {
             final Collection<Connection.KeyVal> data = req.data();
-            final BufferedWriter w = new BufferedWriter(new OutputStreamWriter(outputStream, Charset.forName(req.postDataCharset())));
+            final BufferedWriter w = new BufferedWriter(new OutputStreamWriter(outputStream, req.postDataCharset()));
             final String boundary = req.mimeBoundary;
 
-            if (boundary != null) {
-                // boundary will be set if we're in multipart mode
+            if (boundary != null) { // a multipart post
                 for (Connection.KeyVal keyVal : data) {
                     w.write("--");
                     w.write(boundary);
@@ -1225,7 +1258,7 @@ public class HttpConnection implements Connection {
                         String contentType = keyVal.contentType();
                         w.write(contentType != null ? contentType : DefaultUploadType);
                         w.write("\r\n\r\n");
-                        w.flush(); // flush
+                        w.flush();
                         DataUtil.crossStreams(input, outputStream);
                         outputStream.flush();
                     } else {
@@ -1237,25 +1270,24 @@ public class HttpConnection implements Connection {
                 w.write("--");
                 w.write(boundary);
                 w.write("--");
-            } else {
-                String body = req.requestBody();
-                if (body != null) {
-                    // data will be in query string, we're sending a plaintext body
-                    w.write(body);
+            } else if (req.body != null) { // a single body (bytes or plain text);  data will be in query string
+                if (req.body instanceof String) {
+                    w.write((String) req.body);
+                } else if (req.body instanceof InputStream) {
+                    DataUtil.crossStreams((InputStream) req.body, outputStream);
+                    outputStream.flush();
+                } else {
+                    throw new IllegalStateException();
                 }
-                else {
-                    // regular form data (application/x-www-form-urlencoded)
-                    boolean first = true;
-                    for (Connection.KeyVal keyVal : data) {
-                        if (!first)
-                            w.append('&');
-                        else
-                            first = false;
+            } else { // regular form data (application/x-www-form-urlencoded)
+                boolean first = true;
+                for (Connection.KeyVal keyVal : data) {
+                    if (!first) w.append('&');
+                    else first = false;
 
-                        w.write(URLEncoder.encode(keyVal.key(), req.postDataCharset()));
-                        w.write('=');
-                        w.write(URLEncoder.encode(keyVal.value(), req.postDataCharset()));
-                    }
+                    w.write(URLEncoder.encode(keyVal.key(), req.postDataCharset()));
+                    w.write('=');
+                    w.write(URLEncoder.encode(keyVal.value(), req.postDataCharset()));
                 }
             }
             w.close();

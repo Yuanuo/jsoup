@@ -258,7 +258,7 @@ public class TokeniserStateTest {
     @Test
     public void nullInTag() {
         Document doc = Jsoup.parse("<di\0v>One</di\0v>Two");
-        assertEquals("<di�v>\n One\n</di�v>Two", doc.body().html());
+        assertEquals("<di�v>One</di�v>Two", doc.body().html());
     }
 
     @Test
@@ -269,5 +269,32 @@ public class TokeniserStateTest {
 
         doc = Jsoup.parse("<p foo=");
         assertEquals("<p foo></p>", doc.body().html());
+    }
+
+    @Test void customDataTagWithHyphen() {
+        // https://github.com/jhy/jsoup/issues/2332
+
+        TagSet tagSet = TagSet.Html();
+        tagSet.valueOf("custom-data", Parser.NamespaceHtml).set(Tag.Data);
+        tagSet.valueOf("custom-rcdata", Parser.NamespaceHtml).set(Tag.RcData);
+
+        String html = "<body><custom-data>a < > b</custom-data><p>One</p><custom-rcdata>a < > b</custom-rcdata><p>Two</p>";
+        Document doc = Jsoup.parse(html, Parser.htmlParser().tagSet(tagSet));
+        assertEquals(
+            "<custom-data>a < > b</custom-data><p>One</p><custom-rcdata>a &lt; &gt; b</custom-rcdata><p>Two</p>",
+            TextUtil.normalizeSpaces(doc.body().html()));
+    }
+
+    @Test void customDataTagWithHyphenXml() {
+        String xml = "<custom-data>a < > b</custom-data><p>One</p><custom-rcdata>a < > b</custom-rcdata><p>Two</p>";
+        Parser parser = Parser.xmlParser();
+        TagSet tagSet = parser.tagSet();
+        tagSet.valueOf("custom-data", Parser.NamespaceXml).set(Tag.Data);
+        tagSet.valueOf("custom-rcdata", Parser.NamespaceXml).set(Tag.RcData);
+
+        Document doc = Jsoup.parse(xml, parser);
+        assertEquals(
+            "<custom-data><![CDATA[a < > b]]></custom-data><p>One</p><custom-rcdata>a &lt; &gt; b</custom-rcdata><p>Two</p>",
+            TextUtil.normalizeSpaces(doc.html()));
     }
 }

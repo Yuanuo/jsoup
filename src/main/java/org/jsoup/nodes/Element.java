@@ -1,8 +1,8 @@
 package org.jsoup.nodes;
 
-import org.jsoup.helper.ChangeNotifyingArrayList;
 import org.jsoup.helper.Validate;
 import org.jsoup.internal.Normalizer;
+import org.jsoup.internal.QuietAppendable;
 import org.jsoup.internal.StringUtil;
 import org.jsoup.parser.ParseSettings;
 import org.jsoup.parser.Parser;
@@ -12,13 +12,11 @@ import org.jsoup.select.Collector;
 import org.jsoup.select.Elements;
 import org.jsoup.select.Evaluator;
 import org.jsoup.select.NodeFilter;
-import org.jsoup.select.NodeTraversor;
 import org.jsoup.select.NodeVisitor;
-import org.jsoup.select.QueryParser;
+import org.jsoup.select.Nodes;
 import org.jsoup.select.Selector;
 import org.jspecify.annotations.Nullable;
 
-import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -37,11 +35,11 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.jsoup.internal.Normalizer.normalize;
-import static org.jsoup.nodes.Document.OutputSettings.Syntax.html;
 import static org.jsoup.nodes.Document.OutputSettings.Syntax.xml;
 import static org.jsoup.nodes.TextNode.lastCharIsWhitespace;
 import static org.jsoup.parser.Parser.NamespaceHtml;
 import static org.jsoup.parser.TokenQueue.escapeCssIdentifier;
+import static org.jsoup.select.Selector.evaluatorOf;
 
 /**
  An HTML Element consists of a tag name, attributes, and child nodes (including text nodes and other elements).
@@ -50,11 +48,11 @@ import static org.jsoup.parser.TokenQueue.escapeCssIdentifier;
 */
 public class Element extends Node implements Iterable<Element> {
     private static final List<Element> EmptyChildren = Collections.emptyList();
+    private static final NodeList EmptyNodeList = new NodeList(0);
     private static final Pattern ClassSplit = Pattern.compile("\\s+");
     private static final String BaseUriKey = Attributes.internalKey("baseUri");
-    private Tag tag;
-    private @Nullable WeakReference<List<Element>> shadowChildrenRef; // points to child elements shadowed from node children
-    List<Node> childNodes;
+    Tag tag;
+    NodeList childNodes;
     @Nullable Attributes attributes; // field is nullable but all methods for attributes are non-null
 
     /**
@@ -72,7 +70,7 @@ public class Element extends Node implements Iterable<Element> {
      * @see #Element(String tag, String namespace)
      */
     public Element(String tag) {
-        this(Tag.valueOf(tag, Parser.NamespaceHtml, ParseSettings.preserveCase), "", null);
+        this(tag, Parser.NamespaceHtml);
     }
 
     /**
@@ -86,7 +84,7 @@ public class Element extends Node implements Iterable<Element> {
      */
     public Element(Tag tag, @Nullable String baseUri, @Nullable Attributes attributes) {
         Validate.notNull(tag);
-        childNodes = EmptyNodes;
+        childNodes = EmptyNodeList;
         this.attributes = attributes;
         this.tag = tag;
         if (baseUri != null)
@@ -108,12 +106,12 @@ public class Element extends Node implements Iterable<Element> {
      Internal test to check if a nodelist object has been created.
      */
     protected boolean hasChildNodes() {
-        return childNodes != EmptyNodes;
+        return childNodes != EmptyNodeList;
     }
 
     @Override protected List<Node> ensureChildNodes() {
-        if (childNodes == EmptyNodes) {
-            childNodes = new NodeList(this, 4);
+        if (childNodes == EmptyNodeList) {
+            childNodes = new NodeList(4);
         }
         return childNodes;
     }
@@ -216,7 +214,8 @@ public class Element extends Node implements Iterable<Element> {
     public Element tagName(String tagName, String namespace) {
         Validate.notEmptyParam(tagName, "tagName");
         Validate.notEmptyParam(namespace, "namespace");
-        tag = Tag.valueOf(tagName, namespace, NodeUtils.parser(this).settings()); // maintains the case option of the original parse
+        Parser parser = NodeUtils.parser(this);
+        tag = parser.tagSet().valueOf(tagName, namespace, parser.settings()); // maintains the case option of the original parse
         return this;
     }
 
@@ -227,6 +226,18 @@ public class Element extends Node implements Iterable<Element> {
      */
     public Tag tag() {
         return tag;
+    }
+
+    /**
+     Change the Tag of this element.
+     @param tag the new tag
+     @return this element, for chaining
+     @since 1.20.1
+     */
+    public Element tag(Tag tag) {
+        Validate.notNull(tag);
+        this.tag = tag;
+        return this;
     }
 
     /**
@@ -376,35 +387,43 @@ public class Element extends Node implements Iterable<Element> {
 
     /**
      * Maintains a shadow copy of this element's child elements. If the nodelist is changed, this cache is invalidated.
-     * TODO - think about pulling this out as a helper as there are other shadow lists (like in Attributes) kept around.
      * @return a list of child elements
      */
     List<Element> childElementsList() {
-        if (childNodeSize() == 0)
-            return EmptyChildren; // short circuit creating empty
-
-        List<Element> children;
-        if (shadowChildrenRef == null || (children = shadowChildrenRef.get()) == null) {
-            final int size = childNodes.size();
-            children = new ArrayList<>(size);
-            //noinspection ForLoopReplaceableByForEach (beacause it allocates an Iterator which is wasteful here)
-            for (int i = 0; i < size; i++) {
-                final Node node = childNodes.get(i);
-                if (node instanceof Element)
-                    children.add((Element) node);
-            }
-            shadowChildrenRef = new WeakReference<>(children);
+        if (childNodeSize() == 0) return EmptyChildren; // short circuit creating empty
+        List<Element> children = cachedChildren();
+        if (children == null) {
+            children = filterNodes(Element.class);
+            stashChildren(children);
         }
         return children;
     }
 
-    /**
-     * Clears the cached shadow child elements.
-     */
-    @Override
-    void nodelistChanged() {
-        super.nodelistChanged();
-        shadowChildrenRef = null;
+    private static final String childElsKey = "jsoup.childEls";
+    private static final String childElsMod = "jsoup.childElsMod";
+
+    /** returns the cached child els, if they exist, and the modcount of our childnodes matches the stashed modcount */
+    private @Nullable List<Element> cachedChildren() {
+        Map<String, Object> userData = attributes().userData();
+        //noinspection unchecked
+        WeakReference<List<Element>> ref = (WeakReference<List<Element>>) userData.get(childElsKey);
+        if (ref != null) {
+            List<Element> els = ref.get();
+            if (els != null) {
+                Integer modCount = (Integer) userData.get(childElsMod);
+                if (modCount != null && modCount == childNodes.modCount())
+                    return els;
+            }
+        }
+        return null;
+    }
+
+    /** caches the child els into the Attribute user data. */
+    private void stashChildren(List<Element> els) {
+        Map<String, Object> userData = attributes().userData();
+        WeakReference<List<Element>> ref = new WeakReference<>(els);
+        userData.put(childElsKey, ref);
+        userData.put(childElsMod, childNodes.modCount());
     }
 
     /**
@@ -459,12 +478,15 @@ public class Element extends Node implements Iterable<Element> {
 
     /**
      * Find elements that match the {@link Selector} CSS query, with this element as the starting context. Matched elements
-     * may include this element, or any of its children.
+     * may include this element, or any of its descendents.
+     * <p>If the query starts with a combinator (e.g. {@code *} or {@code >}), that will combine to this element.</p>
      * <p>This method is generally more powerful to use than the DOM-type {@code getElementBy*} methods, because
      * multiple filters can be combined, e.g.:</p>
      * <ul>
-     * <li>{@code el.select("a[href]")} - finds links ({@code a} tags with {@code href} attributes)
-     * <li>{@code el.select("a[href*=example.com]")} - finds links pointing to example.com (loosely)
+     * <li>{@code el.select("a[href]")} - finds links ({@code a} tags with {@code href} attributes)</li>
+     * <li>{@code el.select("a[href*=example.com]")} - finds links pointing to example.com (loosely)</li>
+     * <li>{@code el.select("* div")} - finds all divs that descend from this element (and excludes this element)</li>
+     * <li>{@code el.select("> div")} - finds all divs that are direct children of this element (and excludes this element)</li>
      * </ul>
      * <p>See the query syntax documentation in {@link org.jsoup.select.Selector}.</p>
      * <p>Also known as {@code querySelectorAll()} in the Web DOM.</p>
@@ -485,7 +507,7 @@ public class Element extends Node implements Iterable<Element> {
      * repeatedly parsing the CSS query.
      * @param evaluator an element evaluator
      * @return an {@link Elements} list containing elements that match the query (empty if none match)
-     * @see QueryParser#parse(String)
+     * @see Selector#evaluatorOf(String css)
      */
     public Elements select(Evaluator evaluator) {
         return Selector.select(evaluator, this);
@@ -506,7 +528,7 @@ public class Element extends Node implements Iterable<Element> {
      @return a {@link Stream} containing elements that match the query (empty if none match)
      @throws Selector.SelectorParseException (unchecked) on an invalid CSS query.
      @see Selector selector query syntax
-     @see QueryParser#parse(String)
+     @see #selectStream(Evaluator eval)
      @since 1.19.1
      */
     public Stream<Element> selectStream(String cssQuery) {
@@ -518,6 +540,7 @@ public class Element extends Node implements Iterable<Element> {
 
      @param evaluator an element Evaluator
      @return a {@link Stream} containing elements that match the query (empty if none match)
+     @see Selector#evaluatorOf(String css)
      @since 1.19.1
      */
     public Stream<Element> selectStream(Evaluator evaluator) {
@@ -558,11 +581,118 @@ public class Element extends Node implements Iterable<Element> {
      @since 1.15.2
      */
     public Element expectFirst(String cssQuery) {
-        return (Element) Validate.ensureNotNull(
+        return Validate.expectNotNull(
             Selector.selectFirst(cssQuery, this),
             parent() != null ?
-                "No elements matched the query '%s' on element '%s'.":
+                "No elements matched the query '%s' on element '%s'." :
                 "No elements matched the query '%s' in the document."
+            , cssQuery, this.tagName()
+        );
+    }
+
+    /**
+     Find nodes that match the supplied {@link Evaluator}, with this element as the starting context. Matched
+     nodes may include this element, or any of its descendents.
+
+     @param evaluator an evaluator
+     @return a list of nodes that match the query (empty if none match)
+     @since 1.21.1
+     */
+    public Nodes<Node> selectNodes(Evaluator evaluator) {
+        return selectNodes(evaluator, Node.class);
+    }
+
+    /**
+     Find nodes that match the supplied {@link Selector} CSS query, with this element as the starting context. Matched
+     nodes may include this element, or any of its descendents.
+     <p>To select leaf nodes, the query should specify the node type, e.g. {@code ::text},
+     {@code ::comment}, {@code ::data}, {@code ::leafnode}.</p>
+
+     @param cssQuery a {@link Selector} CSS query
+     @return a list of nodes that match the query (empty if none match)
+     @since 1.21.1
+     */
+    public Nodes<Node> selectNodes(String cssQuery) {
+        return selectNodes(cssQuery, Node.class);
+    }
+
+    /**
+     Find nodes that match the supplied Evaluator, with this element as the starting context. Matched
+     nodes may include this element, or any of its descendents.
+
+     @param evaluator an evaluator
+     @param type the type of node to collect (e.g. {@link Element}, {@link LeafNode}, {@link TextNode} etc)
+     @param <T> the type of node to collect
+     @return a list of nodes that match the query (empty if none match)
+     @since 1.21.1
+     */
+    public <T extends Node> Nodes<T> selectNodes(Evaluator evaluator, Class<T> type) {
+        Validate.notNull(evaluator);
+        return Collector.collectNodes(evaluator, this, type);
+    }
+
+    /**
+     Find nodes that match the supplied {@link Selector} CSS query, with this element as the starting context. Matched
+     nodes may include this element, or any of its descendents.
+     <p>To select specific node types, use {@code ::text}, {@code ::comment}, {@code ::leafnode}, etc. For example, to
+     select all text nodes under {@code p} elements: </p>
+     <pre>    Nodes&lt;TextNode&gt; textNodes = doc.selectNodes("p ::text", TextNode.class);</pre>
+
+     @param cssQuery a {@link Selector} CSS query
+     @param type the type of node to collect (e.g. {@link Element}, {@link LeafNode}, {@link TextNode} etc)
+     @param <T> the type of node to collect
+     @return a list of nodes that match the query (empty if none match)
+     @since 1.21.1
+     */
+    public <T extends Node> Nodes<T> selectNodes(String cssQuery, Class<T> type) {
+        Validate.notEmpty(cssQuery);
+        return selectNodes(evaluatorOf(cssQuery), type);
+    }
+
+    /**
+     Find the first Node that matches the {@link Selector} CSS query, with this element as the starting context.
+     <p>This is effectively the same as calling {@code element.selectNodes(query).first()}, but is more efficient as
+     query
+     execution stops on the first hit.</p>
+     <p>Also known as {@code querySelector()} in the Web DOM.</p>
+
+     @param cssQuery cssQuery a {@link Selector} CSS-like query
+     @return the first matching node, or <b>{@code null}</b> if there is no match.
+     @since 1.21.1
+     @see #expectFirst(String)
+     */
+    public @Nullable <T extends Node> T selectFirstNode(String cssQuery, Class<T> type) {
+        return selectFirstNode(evaluatorOf(cssQuery), type);
+    }
+
+    /**
+     Finds the first Node that matches the supplied Evaluator, with this element as the starting context, or
+     {@code null} if none match.
+
+     @param evaluator an element evaluator
+     @return the first matching node (walking down the tree, starting from this element), or {@code null} if none
+     match.
+     @since 1.21.1
+     */
+    public @Nullable <T extends Node> T selectFirstNode(Evaluator evaluator, Class<T> type) {
+        return Collector.findFirstNode(evaluator, this, type);
+    }
+
+    /**
+     Just like {@link #selectFirstNode(String, Class)}, but if there is no match, throws an
+     {@link IllegalArgumentException}. This is useful if you want to simply abort processing on a failed match.
+
+     @param cssQuery a {@link Selector} CSS-like query
+     @return the first matching node
+     @throws IllegalArgumentException if no match is found
+     @since 1.21.1
+     */
+    public <T extends Node> T expectFirstNode(String cssQuery, Class<T> type) {
+        return Validate.expectNotNull(
+            selectFirstNode(cssQuery, type),
+            parent() != null ?
+                "No nodes matched the query '%s' on element '%s'.":
+                "No nodes matched the query '%s' in the document."
             , cssQuery, this.tagName()
         );
     }
@@ -575,7 +705,7 @@ public class Element extends Node implements Iterable<Element> {
      * @return if this element matches the query
      */
     public boolean is(String cssQuery) {
-        return is(QueryParser.parse(cssQuery));
+        return is(evaluatorOf(cssQuery));
     }
 
     /**
@@ -595,7 +725,7 @@ public class Element extends Node implements Iterable<Element> {
      * found.
      */
     public @Nullable Element closest(String cssQuery) {
-        return closest(QueryParser.parse(cssQuery));
+        return closest(evaluatorOf(cssQuery));
     }
 
     /**
@@ -784,7 +914,8 @@ public class Element extends Node implements Iterable<Element> {
      * @return the new element, in the specified namespace
      */
     public Element appendElement(String tagName, String namespace) {
-        Element child = new Element(Tag.valueOf(tagName, namespace, NodeUtils.parser(this).settings()), baseUri());
+        Parser parser = NodeUtils.parser(this);
+        Element child = new Element(parser.tagSet().valueOf(tagName, namespace, parser.settings()), baseUri());
         appendChild(child);
         return child;
     }
@@ -808,7 +939,8 @@ public class Element extends Node implements Iterable<Element> {
      * @return the new element, in the specified namespace
      */
     public Element prependElement(String tagName, String namespace) {
-        Element child = new Element(Tag.valueOf(tagName, namespace, NodeUtils.parser(this).settings()), baseUri());
+        Parser parser = NodeUtils.parser(this);
+        Element child = new Element(parser.tagSet().valueOf(tagName, namespace, parser.settings()), baseUri());
         prependChild(child);
         return child;
     }
@@ -1022,22 +1154,7 @@ public class Element extends Node implements Iterable<Element> {
         return siblings;
     }
 
-    /**
-     * Gets the next sibling element of this element. E.g., if a {@code div} contains two {@code p}s,
-     * the {@code nextElementSibling} of the first {@code p} is the second {@code p}.
-     * <p>
-     * This is similar to {@link #nextSibling()}, but specifically finds only Elements
-     * </p>
-     * @return the next element, or null if there is no next element
-     * @see #previousElementSibling()
-     */
-    public @Nullable Element nextElementSibling() {
-        Node next = this;
-        while ((next = next.nextSibling()) != null) {
-            if (next instanceof Element) return (Element) next;
-        }
-        return null;
-    }
+
 
     /**
      * Get each of the sibling elements that come after this element.
@@ -1046,19 +1163,6 @@ public class Element extends Node implements Iterable<Element> {
      */
     public Elements nextElementSiblings() {
         return nextElementSiblings(true);
-    }
-
-    /**
-     * Gets the previous element sibling of this element.
-     * @return the previous element, or null if there is no previous element
-     * @see #nextElementSibling()
-     */
-    public @Nullable Element previousElementSibling() {
-        Node prev = this;
-        while ((prev = prev.previousSibling()) != null) {
-            if (prev instanceof Element) return (Element) prev;
-        }
-        return null;
     }
 
     /**
@@ -1434,7 +1538,7 @@ public class Element extends Node implements Iterable<Element> {
      */
     public String text() {
         final StringBuilder accum = StringUtil.borrowBuilder();
-        NodeTraversor.traverse(new TextAccumulator(accum), this);
+        new TextAccumulator(accum).traverse(this);
         return StringUtil.releaseBuilder(accum).trim();
     }
 
@@ -1463,7 +1567,7 @@ public class Element extends Node implements Iterable<Element> {
             if (node instanceof Element) {
                 Element element = (Element) node;
                 Node next = node.nextSibling();
-                if (element.isBlock() && (next instanceof TextNode || next instanceof Element && !((Element) next).tag.formatAsBlock()) && !lastCharIsWhitespace(accum))
+                if (!element.tag.isInline() && (next instanceof TextNode || next instanceof Element && ((Element) next).tag.isInline()) && !lastCharIsWhitespace(accum))
                     accum.append(' ');
             }
 
@@ -1479,6 +1583,14 @@ public class Element extends Node implements Iterable<Element> {
      */
     public String wholeText() {
         return wholeTextOf(nodeStream());
+    }
+
+    /**
+     An Element's nodeValue is its whole own text.
+     */
+    @Override
+    public String nodeValue() {
+        return wholeOwnText();
     }
 
     private static String wholeTextOf(Stream<Node> stream) {
@@ -1564,10 +1676,8 @@ public class Element extends Node implements Iterable<Element> {
     public Element text(String text) {
         Validate.notNull(text);
         empty();
-        // special case for script/style in HTML: should be data node
-        Document owner = ownerDocument();
-        // an alternate impl would be to run through the parser
-        if (owner != null && owner.parser().isContentForTagData(normalName()))
+        // special case for script/style in HTML (or customs): should be data node
+        if (tag().is(Tag.Data))
             appendChild(new DataNode(text));
         else
             appendChild(new TextNode(text));
@@ -1797,45 +1907,32 @@ public class Element extends Node implements Iterable<Element> {
         return Range.of(this, false);
     }
 
-    boolean shouldIndent(final Document.OutputSettings out) {
-        return out.prettyPrint() && isFormatAsBlock(out) && !isInlineable(out) && !preserveWhitespace(parentNode);
-    }
-
     @Override
-    void outerHtmlHead(final Appendable accum, int depth, final Document.OutputSettings out) throws IOException {
-        if (shouldIndent(out)) {
-            if (accum instanceof StringBuilder) {
-                if (((StringBuilder) accum).length() > 0)
-                    indent(accum, depth, out);
-            } else {
-                indent(accum, depth, out);
-            }
-        }
-        accum.append('<').append(safeTagName(out.syntax()));
+    void outerHtmlHead(final QuietAppendable accum, Document.OutputSettings out) {
+        String tagName = safeTagName(out.syntax());
+        accum.append('<').append(tagName);
         if (attributes != null) attributes.html(accum, out);
 
-        // selfclosing includes unknown tags, isEmpty defines tags that are always empty
-        if (childNodes.isEmpty() && tag.isSelfClosing()) {
-            if (out.syntax() == html && tag.isEmpty())
+        if (childNodes.isEmpty()) {
+            boolean xmlMode = out.syntax() == xml || !tag.namespace().equals(NamespaceHtml);
+            if (xmlMode && (tag.is(Tag.SeenSelfClose) || (tag.isKnownTag() && (tag.isEmpty() || tag.isSelfClosing())))) {
+                accum.append(" />");
+            } else if (!xmlMode && tag.isEmpty()) { // html void element
                 accum.append('>');
-            else
-                accum.append(" />"); // <img> in html, <img /> in xml
+            } else {
+                accum.append("></").append(tagName).append('>');
         }
-        else
+        } else {
             accum.append('>');
+    }
     }
 
     @Override
-    void outerHtmlTail(Appendable accum, int depth, Document.OutputSettings out) throws IOException {
-        if (!(childNodes.isEmpty() && tag.isSelfClosing())) {
-            if (out.prettyPrint() && (!childNodes.isEmpty() && (
-                (tag.formatAsBlock() && !preserveWhitespace(parentNode)) ||
-                    (out.outline() && (childNodes.size()>1 || (childNodes.size()==1 && (childNodes.get(0) instanceof Element))))
-            )))
-                indent(accum, depth, out);
+    void outerHtmlTail(QuietAppendable accum, Document.OutputSettings out) {
+        if (!childNodes.isEmpty())
             accum.append("</").append(safeTagName(out.syntax())).append('>');
+        // if empty, we have already closed in htmlHead
         }
-    }
 
     /* If XML syntax, normalizes < to _ in tag name. */
     @Nullable private String safeTagName(Document.OutputSettings.Syntax syntax) {
@@ -1850,19 +1947,23 @@ public class Element extends Node implements Iterable<Element> {
      * @see #outerHtml()
      */
     public String html() {
-        StringBuilder accum = StringUtil.borrowBuilder();
-        html(accum);
-        String html = StringUtil.releaseBuilder(accum);
+        StringBuilder sb = StringUtil.borrowBuilder();
+        html(sb);
+        String html = StringUtil.releaseBuilder(sb);
         return NodeUtils.outputSettings(this).prettyPrint() ? html.trim() : html;
     }
 
     @Override
-    public <T extends Appendable> T html(T appendable) {
-        final int size = childNodes.size();
-        for (int i = 0; i < size; i++)
-            childNodes.get(i).outerHtml(appendable);
-
-        return appendable;
+    public <T extends Appendable> T html(T accum) {
+        Node child = firstChild();
+        if (child != null) {
+            Printer printer = Printer.printerFor(child, QuietAppendable.wrap(accum));
+            while (child != null) {
+                printer.traverse(child);
+                child = child.nextSibling();
+    }
+        }
+        return accum;
     }
 
     /**
@@ -1893,9 +1994,13 @@ public class Element extends Node implements Iterable<Element> {
     @Override
     protected Element doClone(@Nullable Node parent) {
         Element clone = (Element) super.doClone(parent);
-        clone.attributes = attributes != null ? attributes.clone() : null;
-        clone.childNodes = new NodeList(clone, childNodes.size());
+        clone.childNodes = new NodeList(childNodes.size());
         clone.childNodes.addAll(childNodes); // the children then get iterated and cloned in Node.clone
+        if (attributes != null) {
+            clone.attributes = attributes.clone();
+            // clear any cached children
+            clone.attributes.userData(childElsKey, null);
+        }
 
         return clone;
     }
@@ -1957,30 +2062,14 @@ public class Element extends Node implements Iterable<Element> {
         return  (Element) super.filter(nodeFilter);
     }
 
-    private static final class NodeList extends ChangeNotifyingArrayList<Node> {
-        private final Element owner;
-
-        NodeList(Element owner, int initialCapacity) {
-            super(initialCapacity);
-            this.owner = owner;
+    static final class NodeList extends ArrayList<Node> {
+        public NodeList(int size) {
+            super(size);
         }
 
-        @Override public void onContentsChanged() {
-            owner.nodelistChanged();
+        int modCount() {
+            return this.modCount;
         }
-    }
-
-    private boolean isFormatAsBlock(Document.OutputSettings out) {
-        return tag.isBlock() || (parent() != null && parent().tag().formatAsBlock()) || out.outline();
-    }
-
-    private boolean isInlineable(Document.OutputSettings out) {
-        if (!tag.isInline())
-            return false;
-        return (parent() == null || parent().isBlock())
-            && !isEffectivelyFirst()
-            && !out.outline()
-            && !nameIs("br");
     }
 
     private Object userData;

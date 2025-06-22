@@ -3,11 +3,14 @@ package org.jsoup.integration;
 import org.jsoup.Connection;
 import org.jsoup.Jsoup;
 import org.jsoup.helper.DataUtil;
+import org.jsoup.integration.servlets.EchoServlet;
 import org.jsoup.integration.servlets.FileServlet;
 import org.jsoup.integration.servlets.SlowRider;
+import org.jsoup.internal.SharedConstants;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.parser.StreamParser;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.io.BufferedInputStream;
@@ -24,10 +27,15 @@ import static org.junit.jupiter.api.Assertions.*;
  * Failsafe integration tests for Connect methods. These take a bit longer to run, so included as Integ, not Unit, tests.
  */
 public class ConnectIT {
+    @BeforeAll
+    public static void setUp() {
+        TestServer.start();
+        System.setProperty(SharedConstants.UseHttpClient, "false"); // use the default UrlConnection. See HttpClientConnectIT for other version
+    }
+
     // Slow Rider tests.
     @Test
     public void canInterruptBodyStringRead() throws InterruptedException {
-        // todo - implement in interruptable channels, so it's immediate
         final String[] body = new String[1];
         Thread runner = new Thread(() -> {
             try {
@@ -53,7 +61,6 @@ public class ConnectIT {
 
     @Test
     public void canInterruptDocumentRead() throws InterruptedException {
-        // todo - implement in interruptable channels, so it's immediate
         long start = System.currentTimeMillis();
         final String[] body = new String[1];
         Thread runner = new Thread(() -> {
@@ -129,6 +136,42 @@ public class ConnectIT {
 
         Element h1 = doc.selectFirst("h1");
         assertEquals("outatime", h1.text());
+    }
+
+    @Test void readFullyThrowsOnTimeout() throws IOException {
+        // tests that response.readFully excepts on timeout
+        boolean caught = false;
+        Connection.Response res = Jsoup.connect(SlowRider.Url).timeout(3000).execute();
+        try {
+            res.readFully();
+        } catch (IOException e) {
+            caught = true;
+        }
+        assertTrue(caught);
+    }
+
+    @Test void readBodyThrowsOnTimeout() throws IOException {
+        // tests that response.readBody excepts on timeout
+        boolean caught = false;
+        Connection.Response res = Jsoup.connect(SlowRider.Url).timeout(3000).execute();
+        try {
+            res.readBody();
+        } catch (IOException e) {
+            caught = true;
+        }
+        assertTrue(caught);
+    }
+
+    @Test void bodyThrowsUncheckedOnTimeout() throws IOException {
+        // tests that response.body unchecked excepts on timeout
+        boolean caught = false;
+        Connection.Response res = Jsoup.connect(SlowRider.Url).timeout(3000).execute();
+        try {
+            res.body();
+        } catch (UncheckedIOException e) {
+            caught = true;
+        }
+        assertTrue(caught);
     }
 
     @Test
@@ -248,6 +291,21 @@ public class ConnectIT {
             String fullText = new String(fullRead.array(), 0, fullRead.limit(), StandardCharsets.UTF_8);
             assertTrue(fullText.startsWith(firstText));
             assertEquals(LargeHtmlSize, fullText.length());
+        }
+    }
+
+    @Test public void bodyStreamConstrainedViaReadFully() throws IOException {
+        int cap = 5 * 1024;
+        String url = FileServlet.urlTo("/htmltests/large.html"); // 280 K
+        try (BufferedInputStream stream = Jsoup
+            .connect(url)
+            .maxBodySize(cap)
+            .execute()
+            .readFully()
+            .bodyStream()) {
+
+            ByteBuffer cappedRead = DataUtil.readToByteBuffer(stream, 0);
+            assertEquals(cap, cappedRead.limit());
         }
     }
 

@@ -1,5 +1,6 @@
 package org.jsoup.parser;
 
+import org.jsoup.helper.Validate;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Node;
@@ -8,22 +9,27 @@ import org.jspecify.annotations.Nullable;
 import java.io.Reader;
 import java.io.StringReader;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  Parses HTML or XML into a {@link org.jsoup.nodes.Document}. Generally, it is simpler to use one of the parse methods in
  {@link org.jsoup.Jsoup}.
- <p>Note that a Parser instance object is not threadsafe. To reuse a Parser configuration in a multi-threaded
- environment, use {@link #newInstance()} to make copies. */
+ <p>Note that a given Parser instance object is threadsafe, but not concurrent. (Concurrent parse calls will
+ synchronize.) To reuse a Parser configuration in a multithreaded environment, use {@link #newInstance()} to make
+ copies.</p>
+ */
 public class Parser implements Cloneable {
     public static final String NamespaceHtml = "http://www.w3.org/1999/xhtml";
     public static final String NamespaceXml = "http://www.w3.org/XML/1998/namespace";
     public static final String NamespaceMathml = "http://www.w3.org/1998/Math/MathML";
     public static final String NamespaceSvg = "http://www.w3.org/2000/svg";
 
-    private TreeBuilder treeBuilder;
+    private final TreeBuilder treeBuilder;
     private ParseErrorList errors;
     private ParseSettings settings;
     private boolean trackPosition = false;
+    private @Nullable TagSet tagSet;
+    private final ReentrantLock lock = new ReentrantLock();
 
     /**
      * Create a new Parser, using the specified TreeBuilder
@@ -55,21 +61,63 @@ public class Parser implements Cloneable {
         settings = new ParseSettings(copy.settings);
         trackPosition = copy.trackPosition;
     }
-    
+
+    /**
+     Parse the contents of a String.
+
+     @param html HTML to parse
+     @param baseUri base URI of document (i.e. original fetch location), for resolving relative URLs.
+     @return parsed Document
+     */
     public Document parseInput(String html, String baseUri) {
         return parseInput(new StringReader(html), baseUri);
     }
 
+    /**
+     Parse the contents of Reader.
+
+     @param inputHtml HTML to parse
+     @param baseUri base URI of document (i.e. original fetch location), for resolving relative URLs.
+     @return parsed Document
+     @throws java.io.UncheckedIOException if an I/O error occurs in the Reader
+     */
     public Document parseInput(Reader inputHtml, String baseUri) {
-        return treeBuilder.parse(inputHtml, baseUri, this);
+        try {
+            lock.lock(); // using a lock vs synchronized to support loom threads
+            return treeBuilder.parse(inputHtml, baseUri, this);
+        } finally {
+            lock.unlock();
+        }
     }
 
+    /**
+     Parse a fragment of HTML into a list of nodes. The context element, if supplied, supplies parsing context.
+
+     @param fragment the fragment of HTML to parse
+     @param context (optional) the element that this HTML fragment is being parsed for (i.e. for inner HTML).
+     @param baseUri base URI of document (i.e. original fetch location), for resolving relative URLs.
+     @return list of nodes parsed from the input HTML.
+     */
     public List<Node> parseFragmentInput(String fragment, @Nullable Element context, String baseUri) {
         return parseFragmentInput(new StringReader(fragment), context, baseUri);
     }
 
+    /**
+     Parse a fragment of HTML into a list of nodes. The context element, if supplied, supplies parsing context.
+
+     @param fragment the fragment of HTML to parse
+     @param context (optional) the element that this HTML fragment is being parsed for (i.e. for inner HTML).
+     @param baseUri base URI of document (i.e. original fetch location), for resolving relative URLs.
+     @return list of nodes parsed from the input HTML.
+     @throws java.io.UncheckedIOException if an I/O error occurs in the Reader
+     */
     public List<Node> parseFragmentInput(Reader fragment, @Nullable Element context, String baseUri) {
-        return treeBuilder.parseFragment(fragment, context, baseUri, this);
+        try {
+            lock.lock();
+            return treeBuilder.parseFragment(fragment, context, baseUri, this);
+        } finally {
+            lock.unlock();
+        }
     }
 
     // gets & sets
@@ -79,17 +127,6 @@ public class Parser implements Cloneable {
      */
     public TreeBuilder getTreeBuilder() {
         return treeBuilder;
-    }
-
-    /**
-     * Update the TreeBuilder used when parsing content.
-     * @param treeBuilder new TreeBuilder
-     * @return this, for chaining
-     */
-    public Parser setTreeBuilder(TreeBuilder treeBuilder) {
-        this.treeBuilder = treeBuilder;
-        treeBuilder.parser = this;
-        return this;
     }
 
     /**
@@ -158,11 +195,29 @@ public class Parser implements Cloneable {
     }
 
     /**
-     (An internal method, visible for Element. For HTML parse, signals that script and style text should be treated as
-     Data Nodes).
+     Set a custom TagSet to use for this Parser. This allows you to define your own tags, and control how they are
+     parsed. For example, you can set a tag to preserve whitespace, or to be treated as a block tag.
+     <p>You can start with the {@link TagSet#Html()} defaults and customize, or a new empty TagSet.</p>
+
+     @param tagSet the TagSet to use. This gets copied, so that changes that the parse makes (tags found in the document will be added) do not clobber the original TagSet.
+     @return this Parser
+     @since 1.20.1
      */
-    public boolean isContentForTagData(String normalName) {
-        return getTreeBuilder().isContentForTagData(normalName);
+    public Parser tagSet(TagSet tagSet) {
+        Validate.notNull(tagSet);
+        this.tagSet = new TagSet(tagSet); // copy it as we are going to mutate it
+        return this;
+    }
+
+    /**
+     Get the current TagSet for this Parser, which will be either this parser's default, or one that you have set.
+     @return the current TagSet. After the parse, this will contain any new tags that were found in the document.
+     @since 1.20.1
+     */
+    public TagSet tagSet() {
+        if (tagSet == null)
+            tagSet = treeBuilder.defaultTagSet();
+        return tagSet;
     }
 
     public String defaultNamespace() {

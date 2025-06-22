@@ -1,10 +1,10 @@
 package org.jsoup.nodes;
 
-import org.jsoup.parser.ParseSettings;
+import org.jsoup.internal.QuietAppendable;
 import org.jsoup.parser.Parser;
 import org.jspecify.annotations.Nullable;
 
-import java.io.IOException;
+import java.util.List;
 
 /**
  A comment node.
@@ -37,17 +37,12 @@ public class Comment extends LeafNode {
     }
 
     @Override
-	void outerHtmlHead(Appendable accum, int depth, Document.OutputSettings out) throws IOException {
-        if (out.prettyPrint() && ((isEffectivelyFirst() && parentNode instanceof Element && ((Element) parentNode).tag().formatAsBlock()) || (out.outline() )))
-            indent(accum, depth, out);
+    void outerHtmlHead(QuietAppendable accum, Document.OutputSettings out) {
         accum
-                .append("<!--")
-                .append(getData())
-                .append("-->");
+            .append("<!--")
+            .append(getData())
+            .append("-->");
     }
-
-    @Override
-    void outerHtmlTail(Appendable accum, int depth, Document.OutputSettings out) {}
 
     @Override
     public Comment clone() {
@@ -76,22 +71,11 @@ public class Comment extends LeafNode {
      * @see #isXmlDeclaration()
      */
     public @Nullable XmlDeclaration asXmlDeclaration() {
-        String data = getData();
-
-        XmlDeclaration decl = null;
-        String declContent = data.substring(1, data.length() - 1);
-        // make sure this bogus comment is not immediately followed by another, treat as comment if so
-        if (isXmlDeclarationData(declContent))
-            return null;
-
-        String fragment = "<" + declContent + ">";
-        // use the HTML parser not XML, so we don't get into a recursive XML Declaration on contrived data
-        Document doc = Parser.htmlParser().settings(ParseSettings.preserveCase).parseInput(fragment, baseUri());
-        if (doc.body().childrenSize() > 0) {
-            Element el = doc.body().child(0);
-            decl = new XmlDeclaration(NodeUtils.parser(doc).settings().normalizeTag(el.tagName()), data.startsWith("!"));
-            decl.attributes().addAll(el.attributes());
-        }
-        return decl;
+        String fragment = "<" + getData() + ">";
+        Parser parser = Parser.xmlParser();
+        List<Node> nodes = parser.parseFragmentInput(fragment, null, "");
+        if (!nodes.isEmpty() && nodes.get(0) instanceof XmlDeclaration)
+            return (XmlDeclaration) nodes.get(0);
+        return null;
     }
 }

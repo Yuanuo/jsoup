@@ -1,13 +1,12 @@
 package org.jsoup.nodes;
 
-import org.jsoup.SerializationException;
 import org.jsoup.helper.Validate;
+import org.jsoup.internal.QuietAppendable;
 import org.jsoup.internal.SharedConstants;
 import org.jsoup.internal.StringUtil;
 import org.jsoup.parser.ParseSettings;
 import org.jspecify.annotations.Nullable;
 
-import java.io.IOException;
 import java.util.AbstractMap;
 import java.util.AbstractSet;
 import java.util.ArrayList;
@@ -486,15 +485,11 @@ public class Attributes implements Iterable<Attribute>, Cloneable {
      */
     public String html() {
         StringBuilder sb = StringUtil.borrowBuilder();
-        try {
-            html(sb, (new Document("")).outputSettings()); // output settings a bit funky, but this html() seldom used
-        } catch (IOException e) { // ought never happen
-            throw new SerializationException(e);
-        }
+        html(QuietAppendable.wrap(sb), new Document.OutputSettings()); // output settings a bit funky, but this html() seldom used
         return StringUtil.releaseBuilder(sb);
     }
 
-    final void html(final Appendable accum, final Document.OutputSettings out) throws IOException {
+    final void html(final QuietAppendable accum, final Document.OutputSettings out) {
         final int sz = size;
         for (int i = 0; i < sz; i++) {
             String key = keys[i];
@@ -558,6 +553,14 @@ public class Attributes implements Iterable<Attribute>, Cloneable {
         clone.size = size;
         clone.keys = Arrays.copyOf(keys, size);
         clone.vals = Arrays.copyOf(vals, size);
+
+        // make a copy of the user data map. (Contents are shallow).
+        int i = indexOfKey(SharedConstants.UserDataKey);
+        if (i != NotFound) {
+            //noinspection unchecked
+            vals[i] = new HashMap<>((Map<String, Object>) vals[i]);
+        }
+
         return clone;
     }
 

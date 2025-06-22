@@ -4,12 +4,12 @@ import org.jsoup.Connection;
 import org.jsoup.HttpStatusException;
 import org.jsoup.Jsoup;
 import org.jsoup.Connection.Method;
+import org.jsoup.TextUtil;
 import org.jsoup.UnsupportedMimeTypeException;
 import org.jsoup.helper.DataUtil;
 import org.jsoup.helper.W3CDom;
 import org.jsoup.integration.servlets.*;
 import org.jsoup.internal.SharedConstants;
-import org.jsoup.internal.StringUtil;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.nodes.FormElement;
@@ -27,13 +27,16 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import javax.servlet.http.HttpServletResponse;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.Authenticator;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -45,7 +48,6 @@ import java.util.stream.Stream;
 import static org.jsoup.helper.AuthenticationHandlerTest.MaxAttempts;
 import static org.jsoup.helper.HttpConnection.CONTENT_TYPE;
 import static org.jsoup.helper.HttpConnection.MULTIPART_FORM_DATA;
-import static org.jsoup.integration.UrlConnectTest.browserUa;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -165,7 +167,6 @@ public class ConnectTest {
     public void doesPostMultipartWithoutInputstream() throws IOException {
         Document doc = Jsoup.connect(echoUrl)
                 .header(CONTENT_TYPE, MULTIPART_FORM_DATA)
-                .userAgent(browserUa)
                 .data("uname", "Jsoup", "uname", "Jonathan", "百", "度一下")
                 .post();
 
@@ -211,7 +212,6 @@ public class ConnectTest {
         Document doc = Jsoup.connect(echoUrl)
             .requestBody(body)
             .header("Content-Type", "application/json")
-            .userAgent(browserUa)
             .data("foo", "true")
             .post();
         assertEquals("POST", ihVal("Method", doc));
@@ -226,7 +226,6 @@ public class ConnectTest {
         Document doc = Jsoup.connect(echoUrl)
             .requestBody(body)
             .header("Content-Type", "application/json")
-            .userAgent(browserUa)
             .post();
         assertEquals("POST", ihVal("Method", doc));
         assertEquals("application/json", ihVal("Content-Type", doc));
@@ -239,7 +238,6 @@ public class ConnectTest {
         Document doc = Jsoup.connect(echoUrl)
             .requestBody(body)
             .header("Content-Type", "text/plain")
-            .userAgent(browserUa)
             .post();
         assertEquals("POST", ihVal("Method", doc));
         assertEquals("text/plain", ihVal("Content-Type", doc));
@@ -253,10 +251,24 @@ public class ConnectTest {
             .requestBody(body)
             .data("uname", "Jsoup", "uname", "Jonathan", "百", "度一下")
             .header("Content-Type", "text/plain") // todo - if user sets content-type, we should append postcharset
-            .userAgent(browserUa)
             .post();
         assertEquals("POST", ihVal("Method", doc));
         assertEquals("uname=Jsoup&uname=Jonathan&%E7%99%BE=%E5%BA%A6%E4%B8%80%E4%B8%8B", ihVal("Query String", doc));
+        assertEquals(body, ihVal("Post Data", doc));
+    }
+
+    @Test void sendsRequestBodyStream() throws IOException {
+        final String body = "{key:value}";
+        InputStream stream = new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8));
+
+        Document doc = Jsoup.connect(echoUrl)
+            .requestBodyStream(stream)
+            .header("Content-Type", "application/json")
+            .data("foo", "true")
+            .post();
+        assertEquals("POST", ihVal("Method", doc));
+        assertEquals("application/json", ihVal("Content-Type", doc));
+        assertEquals("foo=true", ihVal("Query String", doc));
         assertEquals(body, ihVal("Post Data", doc));
     }
 
@@ -379,6 +391,17 @@ public class ConnectTest {
         <tr><th>Part firstPart Filename</th><td>thumb.jpg</td></tr>
         <tr><th>Part firstPart Size</th><td>1052</td></tr>
          */
+    }
+
+    @Test
+    public void multipleParsesOkAfterReadFully() throws IOException {
+        Connection.Response res = Jsoup.connect(echoUrl).execute().readFully();
+
+        Document doc = res.parse();
+        assertTrue(doc.title().contains("Environment"));
+
+        Document doc2 = res.parse();
+        assertTrue(doc2.title().contains("Environment"));
     }
 
     @Test
@@ -597,6 +620,26 @@ public class ConnectTest {
         assertEquals(Document.OutputSettings.Syntax.xml, doc.outputSettings().syntax());
     }
 
+    @Test
+    public void testSupplyParserToConnection() throws IOException {
+        String xmlUrl = FileServlet.urlTo("/htmltests/xml-test.xml");
+
+        // parse with both xml and html parser, ensure different
+        Document xmlDoc = Jsoup.connect(xmlUrl).parser(Parser.xmlParser()).get();
+        Document htmlDoc = Jsoup.connect(xmlUrl).parser(Parser.htmlParser()).get();
+        Document autoXmlDoc = Jsoup.connect(xmlUrl).get(); // check connection auto detects xml, uses xml parser
+
+        assertEquals("<doc><val>One<val>Two</val>Three</val></doc>",
+            TextUtil.stripNewlines(xmlDoc.html()));
+        assertNotEquals(htmlDoc, xmlDoc);
+        assertFalse(htmlDoc.hasSameValue(xmlDoc));
+        assertTrue(xmlDoc.hasSameValue(autoXmlDoc));
+
+        assertEquals(1, htmlDoc.select("head").size()); // html parser normalises
+        assertEquals(0, xmlDoc.select("head").size()); // xml parser does not
+        assertEquals(0, autoXmlDoc.select("head").size()); // xml parser does not
+    }
+
     @Test public void imageXmlMimeType() throws IOException {
         // test that we switch to XML, and that we support image/svg+xml
         String mimetype = "image/svg+xml";
@@ -708,12 +751,12 @@ public class ConnectTest {
     public void fetchHandlesXmlAsHtmlWhenParserSet() throws IOException {
         // should auto-detect xml and use XML parser, unless explicitly requested the html parser
         String xmlUrl = FileServlet.urlTo("/htmltests/xml-test.xml");
-        Connection con = Jsoup.connect(xmlUrl).parser(Parser.htmlParser());
+        Connection con = Jsoup.connect(xmlUrl).parser(Parser.htmlParser()); // which will also use the pretty printer by default
         con.data(FileServlet.ContentTypeParam, "application/xml");
         Document doc = con.get();
         Connection.Request req = con.request();
         assertTrue(req.parser().getTreeBuilder() instanceof HtmlTreeBuilder);
-        assertEquals("<html> <head></head> <body> <doc> <val> One <val> Two </val>Three </val> </doc> </body> </html>", StringUtil.normaliseWhitespace(doc.outerHtml()));
+        assertEquals("<html>\n <head></head>\n <body>\n  <doc>\n   <val>\n    One<val>Two</val>Three\n   </val>\n  </doc>\n </body>\n</html>", doc.outerHtml());
     }
 
     @Test
@@ -810,6 +853,12 @@ public class ConnectTest {
         assertEquals(200 * 1024, mediumRes.body().length());
         assertEquals(actualDocText, largeRes.body().length());
         assertEquals(actualDocText, unlimitedRes.body().length());
+
+        assertEquals(actualDocText, defaultRes.readBody().length());
+        assertEquals(50 * 1024, smallRes.readBody().length());
+        assertEquals(200 * 1024, mediumRes.readBody().length());
+        assertEquals(actualDocText, largeRes.readBody().length());
+        assertEquals(actualDocText, unlimitedRes.readBody().length());
     }
 
     @Test void formLoginFlow() throws IOException {

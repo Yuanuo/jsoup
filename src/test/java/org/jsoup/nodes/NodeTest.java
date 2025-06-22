@@ -7,7 +7,6 @@ import org.jsoup.select.Elements;
 import org.jsoup.select.NodeVisitor;
 import org.junit.jupiter.api.Test;
 
-import java.util.Collections;
 import java.util.List;
 
 import static org.jsoup.parser.Parser.*;
@@ -364,8 +363,7 @@ public class NodeTest {
         tn2.text("Text 1 updated");
         assertEquals("Text 1 ", tn1.text());
         div2.insertChildren(-1, divChildren);
-        assertEquals("<div id=\"1\">Text 1 <p>One</p> Text 2 <p>Two</p><p>Three</p></div><div id=\"2\">Text 1 updated"
-            +"<p>One</p> Text 2 <p>Two</p><p>Three</p></div>", TextUtil.stripNewlines(doc.body().html()));
+        assertEquals("<div id=\"1\">Text 1<p>One</p>Text 2<p>Two</p><p>Three</p></div><div id=\"2\">Text 1 updated<p>One</p>Text 2<p>Two</p><p>Three</p></div>", TextUtil.stripNewlines(doc.body().html()));
     }
 
     @Test public void supportsClone() {
@@ -463,6 +461,14 @@ public class NodeTest {
 
         assertNull(firstEl.firstElementChild());
         assertNull(firstEl.lastElementChild());
+    }
+
+    @Test void firstLastSibling() {
+        Document doc = Jsoup.parse("<div><span>One</span> Two <span>Three</span>");
+        Elements spans = doc.select("span");
+        TextNode text = (TextNode) spans.first().nextSibling();
+        assertSame(spans.get(0), text.firstSibling());
+        assertSame(spans.get(1), text.lastSibling());
     }
 
     @Test void nodeName() {

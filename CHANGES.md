@@ -1,27 +1,93 @@
 # jsoup Changelog
 
-## 1.19.2 (PENDING)
+## 1.21.1 (PENDING)
 
 ### Changes
 
-### Improvements
+* Removed previously deprecated methods. [#2317](https://github.com/jhy/jsoup/pull/2317)
 
+### Improvements
+* Enhanced the `Selector` to support direct matching against nodes such as comments and text nodes. For example, you can now find an element that follows a specific comment: `::comment:contains(prices) + p` will select `p` elements immediately after a `<!-- prices: -->` comment. Supported types include `::node`, `::leafnode`, `::comment`, `::text`, and `::data`. Node contextual selectors like `::node:contains(text)`, `:matches(regex)`, and `:blank` are also supported. Introduced `Element#selectNodes(String css)` and `Element#selectNodes(String css, Class nodeType)` for direct node selection. [#2324](https://github.com/jhy/jsoup/pull/2324)
+* Added `TagSet#onNewTag(Consumer<Tag> customizer)`: register a callback that’s invoked for each new or cloned Tag when it’s inserted into the set. Enables dynamic tweaks of tag options (for example, marking all custom tags as self-closing, or everything in a given namespace as preserving whitespace).
+* Made `TokenQueue` and `CharacterReader` autocloseable, to ensure that they will release their buffers back to the buffer pool, for later reuse.
+* Added `Selector#evaluatorOf(String css)`, as a clearer way to obtain an Evaluator from a CSS query. An alias of `QueryParser.parse(String css)`.
+* Custom tags (defined via the `TagSet`) in a foreign namespace (e.g. SVG) can be configured to parse as data tags.
+* Added `NodeVisitor#traverse(Node)` to simplify node traversal calls (vs. importing `NodeTraversor`).
+* The HTML parser now allows the specific text-data type (Data, RcData) to be customized for known tags. (Previously, that was only supported on custom tags.) [#2326](https://github.com/jhy/jsoup/issues/2326).
+* Added `Connection#readFully()` as a replacement for `Connection#bufferUp()` with an explicit IOException. Similarly, added `Connection#readBody()` over `Connection#body()`. Deprecated `Connection#bufferUp()`. [#2327](https://github.com/jhy/jsoup/pull/2327) 
+* When serializing HTML, the `<` and `>` characters are now escaped in attributes. This helps prevent a class of mutation XSS attacks. [#2337](https://github.com/jhy/jsoup/pull/2337)
+* Changed `Connection` to prefer using the JDK's HttpClient over HttpUrlConnection, if available, to enable HTTP/2 support by default. Users can disable via `-Djsoup.useHttpClient=false`. [#2340](https://github.com/jhy/jsoup/pull/2340)
+
+### Bug Fixes
+* The contents of a `script` in a `svg` foreign context should be parsed as script data, not text. [#2320](https://github.com/jhy/jsoup/issues/2320)
+* `Tag#isFormSubmittable()` was updating the Tag's options. [#2323](https://github.com/jhy/jsoup/issues/2323)
+* The HTML pretty-printer would incorrectly trim whitespace when text followed an inline element in a block element. [#2325](https://github.com/jhy/jsoup/issues/2325)
+* Custom tags with hyphens or other non-letter characters in their names now work correctly as Data or RcData tags. Their closing tags are now tokenized properly. [#2332](https://github.com/jhy/jsoup/issues/2332)
+* When cloning an Element, the clone would retain the source's cached child Element list (if any), which could lead to incorrect results when modifying the clone's child elements. [#2334](https://github.com/jhy/jsoup/issues/2334)
+
+## 1.20.1 (2025-04-29)
+
+### Changes
+
+* To better follow the HTML5 spec and current browsers, the HTML parser no longer allows self-closing tags (`<foo />`)
+  to close HTML elements by default. Foreign content (SVG, MathML), and content parsed with the XML parser, still
+  supports self-closing tags. If you need specific HTML tags to support self-closing, you can register a custom tag via
+  the `TagSet` configured in `Parser.tagSet()`, using `Tag#set(Tag.SelfClose)`. Standard void tags (such as `<img>`,
+  `<br>`, etc.) continue to behave as usual and are not affected by this
+  change. [#2300](https://github.com/jhy/jsoup/issues/2300).
+* The following internal components have been **deprecated**. If you do happen to be using any of these, please take the opportunity now to migrate away from them, as they will be removed in jsoup 1.21.1.
+  * `ChangeNotifyingArrayList`, `Document.updateMetaCharsetElement()`, `Document.updateMetaCharsetElement(boolean)`, `HtmlTreeBuilder.isContentForTagData(String)`, `Parser.isContentForTagData(String)`, `Parser.setTreeBuilder(TreeBuilder)`, `Tag.formatAsBlock()`, `Tag.isFormListed()`, `TokenQueue.addFirst(String)`, `TokenQueue.chompTo(String)`, `TokenQueue.chompToIgnoreCase(String)`, `TokenQueue.consumeToIgnoreCase(String)`, `TokenQueue.consumeWord()`, `TokenQueue.matchesAny(String...)`
+
+### Functional Improvements
+
+* Rebuilt the HTML pretty-printer, to simplify and consolidate the implementation, improve consistency, support custom
+  Tags, and provide a cleaner path for ongoing improvements. The specific HTML produced by the pretty-printer may be
+  different from previous versions. [#2286](https://github.com/jhy/jsoup/issues/2286).
+* Added the ability to define custom tags, and to modify properties of known tags, via the `TagSet` tag collection.
+  Their properties can impact both the parse and how content is
+  serialized (output as HTML or XML). [#2285](https://github.com/jhy/jsoup/issues/2285).
 * `Element.cssSelector()` will prefer to return shorter selectors by using ancestor IDs when available and unique. E.g.
   `#id > div > p` instead of  `html > body > div > div > p` [#2283](https://github.com/jhy/jsoup/pull/2283).
 * Added `Elements.deselect(int index)`, `Elements.deselect(Object o)`, and `Elements.deselectAll()` methods to remove
-  elements from the `Elements`
-  list without affecting the DOM. And added `Elements.asList()` method to get a modifiable list of elements without
-  affecting the DOM. (Each Element is still connected to the DOM.) [#2100](https://github.com/jhy/jsoup/issues/2100).
+  elements from the `Elements` list without removing them from the underlying DOM. Also added `Elements.asList()` method
+  to get a modifiable list of elements without affecting the DOM. (Individual Elements remain linked to the
+  DOM.) [#2100](https://github.com/jhy/jsoup/issues/2100).
+* Added support for sending a request body from an InputStream with
+  `Connection.requestBodyStream(InputStream stream)`. [#1122](https://github.com/jhy/jsoup/issues/1122).
+* The XML parser now supports scoped xmlns: prefix namespace declarations, and applies the correct namespace to Tags and
+  Attributes. Also, added `Tag#prefix()`, `Tag#localName()`, `Attribute#prefix()`, `Attribute#localName()`, and
+  `Attribute#namespace()` to retrieve these. [#2299](https://github.com/jhy/jsoup/issues/2299).
+* CSS identifiers are now escaped and unescaped correctly to the CSS spec. `Element#cssSelector()` will emit
+  appropriately escaped selectors, and the QueryParser supports those. Added `Selector.escapeCssIdentifier()` and
+  `Selector.unescapeCssIdentifier()`. [#2297](https://github.com/jhy/jsoup/pull/2297), [#2305](https://github.com/jhy/jsoup/pull/2305)
+
+### Structure and Performance Improvements
+
+* Refactored the CSS `QueryParser` into a clearer recursive descent
+  parser. [#2310](https://github.com/jhy/jsoup/pull/2310).
+* CSS selectors with consecutive combinators (e.g. `div >> p`) will throw an explicit parse
+  exception. [#2311](https://github.com/jhy/jsoup/pull/2311).
+* Performance: reduced the shallow size of an Element from 40 to 32 bytes, and the NodeList from 32 to 24. 
+  [#2307](https://github.com/jhy/jsoup/pull/2307).
+* Performance: reduced GC load of new StringBuilders when tokenizing input
+  HTML. [#2304](https://github.com/jhy/jsoup/pull/2304).
+* Made `Parser` instances threadsafe, so that inadvertent use of the same instance across threads will not lead to
+  errors. For actual concurrency, use `Parser#newInstance()` per
+  thread. [#2314](https://github.com/jhy/jsoup/pull/2314).
 
 ### Bug Fixes
 
-* When serializing a Document to XML, element names with characters that are invalid in XML are now
-  normalized. [#1496].(https://github.com/jhy/jsoup/issues/1496)
+* Element names containing characters invalid in XML are now normalized to valid XML names when
+  serializing. [#1496](https://github.com/jhy/jsoup/issues/1496).
 * When serializing to XML, characters that are invalid in XML 1.0 should be removed (not
   encoded). [#1743](https://github.com/jhy/jsoup/issues/1743).
-* When converting a Document to the W3C DOM in `W3CDom`, an element with an attribute in an undeclared namespace now
-  gets a declaration of `xmlns:prefix="undefined"`. This allows subsequent serializations to XML via `W3CDom.asString()`
+* When converting a `Document` to the W3C DOM in `W3CDom`, elements with an attribute in an undeclared namespace now
+  get a declaration of `xmlns:prefix="undefined"`. This allows subsequent serialization to XML via `W3CDom.asString()`
   to succeed. [#2087](https://github.com/jhy/jsoup/issues/2087).
+* The `StreamParser` could emit the final elements of a document twice, due to how `onNodeCompleted` was fired when closing out the stack. [#2295](https://github.com/jhy/jsoup/issues/2295).
+* When parsing with the XML parser and error tracking enabled, the trailing `?` in `<?xml version="1.0"?>` would
+  incorrectly emit an error. [#2298](https://github.com/jhy/jsoup/issues/2298).
+* Calling `Element#cssSelector()` on an element with combining characters in the class or ID now produces the correct output. [#1984](https://github.com/jhy/jsoup/issues/1984). 
 
 ## 1.19.1 (2025-03-04)
 

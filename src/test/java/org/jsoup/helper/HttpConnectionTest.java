@@ -5,20 +5,25 @@ import org.jsoup.Jsoup;
 import org.jsoup.MultiLocaleExtension.MultiLocaleTest;
 import org.jsoup.integration.ParseTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.net.Authenticator;
 import java.net.MalformedURLException;
 import java.net.PasswordAuthentication;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import static org.jsoup.helper.HttpConnection.Response.fixHeaderEncoding;
 import static org.junit.jupiter.api.Assertions.*;
 
 public class HttpConnectionTest {
@@ -144,6 +149,24 @@ public class HttpConnectionTest {
         assertEquals("Bar", headers.get("Foo").get(0));
         assertFalse(req.hasHeader("Accept"));
         assertNull(headers.get("Accept"));
+    }
+
+    @Test void responseHeadersPreserveInsertOrder() throws IOException {
+        // linkedhashmap preserves the response header order
+        Connection.Response res = new HttpConnection.Response();
+        res.addHeader("5", "5");
+        res.addHeader("4", "4");
+        res.addHeader("3", "3");
+        res.addHeader("2", "2");
+        res.addHeader("1", "1");
+
+        String[] expected = {"5", "4", "3", "2", "1"};
+        int i = 0;
+        for (String key : res.headers().keySet()) {
+            assertEquals(expected[i++], key);
+        }
+
+        assertInstanceOf(LinkedHashMap.class, res.headers());
     }
 
     @Test public void ignoresEmptySetCookies() {
@@ -386,5 +409,22 @@ public class HttpConnectionTest {
         assertNotNull(creds);
         assertEquals("foo", creds.getUserName());
         assertEquals("bar", new String(creds.getPassword()));
+    }
+
+    /* Tests for fixHeaderEncoding. We are handling two cases when a server sends a header in UTF8. The JVM will decode
+    that in 8859 (per the RFC) and we'll get mojibake, and so we try to fix it. On Android, will be decoded correctly,
+    so should not be modified. */
+    static String mojibake(String input) {
+        // simulate mojibake by encoding in UTF-8 and decoding in ISO-8859-1
+        return new String(input.getBytes(StandardCharsets.UTF_8), StandardCharsets.ISO_8859_1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"search.php?moji=我的", "latin=café", "🍕", "ascii"})
+    void fixesHeaderEncodingIfRequired(String input) {
+        // if the input was mojibaked, we fix it; otherwise is passed
+        // https://github.com/jhy/jsoup/issues/2011
+        assertEquals(input, fixHeaderEncoding(input));
+        assertEquals(input, fixHeaderEncoding(mojibake(input)));
     }
 }

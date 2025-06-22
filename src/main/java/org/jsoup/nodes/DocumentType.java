@@ -1,11 +1,11 @@
 package org.jsoup.nodes;
 
+import org.jsoup.internal.QuietAppendable;
 import org.jsoup.internal.StringUtil;
 import org.jsoup.helper.Validate;
 import org.jsoup.nodes.Document.OutputSettings.Syntax;
 import org.jspecify.annotations.Nullable;
 
-import java.io.IOException;
 
 /**
  * A {@code <!DOCTYPE>} node.
@@ -18,7 +18,6 @@ public class DocumentType extends LeafNode {
     private static final String PubSysKey = "pubSysKey"; // PUBLIC or SYSTEM
     private static final String PublicId = "publicId";
     private static final String SystemId = "systemId";
-    // todo: quirk mode from publicId and systemId
 
     /**
      * Create a new doctype element.
@@ -30,9 +29,10 @@ public class DocumentType extends LeafNode {
         super(name);
         Validate.notNull(publicId);
         Validate.notNull(systemId);
-        attr(NameKey, name);
-        attr(PublicId, publicId);
-        attr(SystemId, systemId);
+        attributes()
+            .add(NameKey, name)
+            .add(PublicId, publicId)
+            .add(SystemId, systemId);
         updatePubSyskey();
     }
 
@@ -43,9 +43,9 @@ public class DocumentType extends LeafNode {
 
     private void updatePubSyskey() {
         if (has(PublicId)) {
-            attr(PubSysKey, PUBLIC_KEY);
+            attributes().add(PubSysKey, PUBLIC_KEY);
         } else if (has(SystemId))
-            attr(PubSysKey, SYSTEM_KEY);
+            attributes().add(PubSysKey, SYSTEM_KEY);
     }
 
     /**
@@ -78,11 +78,7 @@ public class DocumentType extends LeafNode {
     }
 
     @Override
-    void outerHtmlHead(Appendable accum, int depth, Document.OutputSettings out) throws IOException {
-        // add a newline if the doctype has a preceding node (which must be a comment)
-        if (siblingIndex > 0 && out.prettyPrint())
-            accum.append('\n');
-
+    void outerHtmlHead(QuietAppendable accum, Document.OutputSettings out) {
         if (out.syntax() == Syntax.html && !has(PublicId) && !has(SystemId)) {
             // looks like a html5 doctype, go lowercase for aesthetics
             accum.append("<!doctype");
@@ -100,9 +96,6 @@ public class DocumentType extends LeafNode {
         accum.append('>');
     }
 
-    @Override
-    void outerHtmlTail(Appendable accum, int depth, Document.OutputSettings out) {
-    }
 
     private boolean has(final String attribute) {
         return !StringUtil.isBlank(attr(attribute));

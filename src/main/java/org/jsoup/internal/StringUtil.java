@@ -172,7 +172,7 @@ public final class StringUtil {
     }
 
     /**
-     * Tests if a string is numeric, i.e. contains only digit characters
+     * Tests if a string is numeric, i.e. contains only ASCII digit characters
      * @param string string to test
      * @return true if only digit chars, false if empty or null or contains non-digit chars
      */
@@ -182,7 +182,7 @@ public final class StringUtil {
 
         int l = string.length();
         for (int i = 0; i < l; i++) {
-            if (!Character.isDigit(string.codePointAt(i)))
+            if (!isDigit(string.charAt(i)))
                 return false;
         }
         return true;
@@ -361,14 +361,21 @@ public final class StringUtil {
     public static String releaseBuilder(StringBuilder sb) {
         Validate.notNull(sb);
         String string = sb.toString();
+        releaseBuilderVoid(sb);
+        return string;
+    }
 
+    /**
+     Releases a borrowed builder, but does not call .toString() on it. Useful in case you already have that string.
+     @param sb the StringBuilder to release.
+     @see #releaseBuilder(StringBuilder)
+     */
+    public static void releaseBuilderVoid(StringBuilder sb) {
         // if it hasn't grown too big, reset it and return it to the pool:
         if (sb.length() <= MaxBuilderSize) {
             sb.delete(0, sb.length()); // make sure it's emptied on release
             BuilderPool.release(sb);
         }
-
-        return string;
     }
 
     /**
@@ -388,4 +395,15 @@ public final class StringUtil {
             StringJoiner::complete);
     }
 
+    public static boolean isAsciiLetter(char c) {
+        return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z';
+    }
+
+    public static boolean isDigit(char c) {
+        return c >= '0' && c <= '9';
+    }
+
+    public static boolean isHexDigit(char c) {
+        return isDigit(c) || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F';
+    }
 }

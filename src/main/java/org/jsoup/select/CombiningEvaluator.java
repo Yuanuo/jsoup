@@ -2,6 +2,8 @@ package org.jsoup.select;
 
 import org.jsoup.internal.StringUtil;
 import org.jsoup.nodes.Element;
+import org.jsoup.nodes.LeafNode;
+import org.jsoup.nodes.Node;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -18,6 +20,7 @@ public abstract class CombiningEvaluator extends Evaluator {
     final List<Evaluator> sortedEvaluators; // cost ascending order
     int num = 0;
     int cost = 0;
+    boolean wantsNodes;
 
     CombiningEvaluator() {
         super();
@@ -28,6 +31,11 @@ public abstract class CombiningEvaluator extends Evaluator {
     CombiningEvaluator(Collection<Evaluator> evaluators) {
         this();
         this.evaluators.addAll(evaluators);
+        updateEvaluators();
+    }
+
+    public void add(Evaluator e) {
+        evaluators.add(e);
         updateEvaluators();
     }
 
@@ -42,13 +50,9 @@ public abstract class CombiningEvaluator extends Evaluator {
         return cost;
     }
 
-    @Nullable Evaluator rightMostEvaluator() {
-        return num > 0 ? evaluators.get(num - 1) : null;
-    }
-    
-    void replaceRightMostEvaluator(Evaluator replacement) {
-        evaluators.set(num - 1, replacement);
-        updateEvaluators();
+    @Override
+    boolean wantsNodes() {
+        return wantsNodes;
     }
 
     void updateEvaluators() {
@@ -63,6 +67,14 @@ public abstract class CombiningEvaluator extends Evaluator {
         sortedEvaluators.clear();
         sortedEvaluators.addAll(evaluators);
         sortedEvaluators.sort(Comparator.comparingInt(Evaluator::cost));
+
+        // any want nodes?
+        for (Evaluator evaluator : evaluators) {
+            if (evaluator.wantsNodes()) {
+                wantsNodes = true;
+                break;
+            }
+        }
     }
 
     public static final class And extends CombiningEvaluator {
@@ -75,10 +87,20 @@ public abstract class CombiningEvaluator extends Evaluator {
         }
 
         @Override
-        public boolean matches(Element root, Element element) {
+        public boolean matches(Element root, Element el) {
             for (int i = 0; i < num; i++) {
-                Evaluator s = sortedEvaluators.get(i);
-                if (!s.matches(root, element))
+                Evaluator eval = sortedEvaluators.get(i);
+                if (!eval.matches(root, el))
+                    return false;
+            }
+            return true;
+        }
+
+        @Override
+        public boolean matches(Element root, LeafNode leaf) {
+            for (int i = 0; i < num; i++) {
+                Evaluator eval = sortedEvaluators.get(i);
+                if (!eval.matches(root, leaf))
                     return false;
             }
             return true;
@@ -110,16 +132,21 @@ public abstract class CombiningEvaluator extends Evaluator {
             super();
         }
 
-        public void add(Evaluator e) {
-            evaluators.add(e);
-            updateEvaluators();
+        @Override
+        public boolean matches(Element root, Element element) {
+            for (int i = 0; i < num; i++) {
+                Evaluator eval = sortedEvaluators.get(i);
+                if (eval.matches(root, element))
+                    return true;
+            }
+            return false;
         }
 
         @Override
-        public boolean matches(Element root, Element node) {
+        public boolean matches(Element root, LeafNode leaf) {
             for (int i = 0; i < num; i++) {
-                Evaluator s = sortedEvaluators.get(i);
-                if (s.matches(root, node))
+                Evaluator eval = sortedEvaluators.get(i);
+                if (eval.matches(root, leaf))
                     return true;
             }
             return false;

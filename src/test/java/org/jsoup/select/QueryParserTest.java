@@ -2,6 +2,7 @@ package org.jsoup.select;
 
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
 import org.junit.jupiter.api.Test;
 
 import static org.jsoup.select.EvaluatorDebug.asElement;
@@ -22,6 +23,7 @@ public class QueryParserTest {
                 "<p><strong>yes</strong></p>" +
                 "</body></html>");
         assertEquals("l1 yes", doc.body().select(">p>strong,>li>strong").text()); // selecting immediate from body
+        assertEquals("l1 yes", doc.body().select(" > p > strong , > li > strong").text()); // space variants
         assertEquals("l2 yes", doc.select("body>p>strong,body>*>li>strong").text());
         assertEquals("l2 yes", doc.select("body>*>li>strong,body>p>strong").text());
         assertEquals("l2 yes", doc.select("body>p>strong,body>*>li>strong").text());
@@ -128,7 +130,7 @@ public class QueryParserTest {
         Selector.SelectorParseException exception =
             assertThrows(Selector.SelectorParseException.class, () -> QueryParser.parse("section > a[href=\"]"));
         assertEquals(
-            "Did not find balanced marker at 'href='",
+            "Did not find balanced marker at 'href=\"]'",
             exception.getMessage());
     }
 
@@ -136,7 +138,7 @@ public class QueryParserTest {
     public void testParsesSingleQuoteInContains() {
         Selector.SelectorParseException exception =
             assertThrows(Selector.SelectorParseException.class, () -> QueryParser.parse("p:contains(One \" One)"));
-        assertEquals("Did not find balanced marker at 'One '",
+        assertEquals("Did not find balanced marker at 'One \" One)'",
             exception.getMessage());
     }
 
@@ -156,7 +158,7 @@ public class QueryParserTest {
     public void exceptOnUnhandledEvaluator() {
         SelectorParseException exception =
             assertThrows(SelectorParseException.class, () -> QueryParser.parse("div / foo"));
-        assertEquals("Could not parse query '/': unexpected token at '/'", exception.getMessage());
+        assertEquals("Could not parse query 'div / foo': unexpected token at '/ foo'", exception.getMessage());
     }
 
     @Test public void okOnSpacesForeAndAft() {
@@ -181,5 +183,56 @@ public class QueryParserTest {
         assertEquals("(Or (Class '.some-other-selector')(And (AttributeWithValueContaining '[class*=child]')(Ancestor (Id '#parent'))))", sexpr("#parent [class*=child], .some-other-selector"));
         assertEquals("(Or (And (Id '#el')(AttributeWithValueContaining '[class*=child]'))(Class '.some-other-selector'))", sexpr("#el[class*=child], .some-other-selector"));
         assertEquals("(Or (And (AttributeWithValueContaining '[class*=child]')(Ancestor (Id '#parent')))(And (Class '.nested')(Ancestor (Class '.some-other-selector'))))", sexpr("#parent [class*=child], .some-other-selector .nested"));
+    }
+
+    @Test void parsesEscapedSubqueries() {
+        String html = "<div class='-4a'>One</div> <div id='-4a'>Two</div>";
+        Document doc = Jsoup.parse(html);
+
+        String classQ = "div.-\\34 a";
+        Element div1 = doc.expectFirst(classQ);
+        assertEquals("One", div1.wholeText());
+
+        String idQ = "#-\\34 a";
+        Element div2 = doc.expectFirst(idQ);
+        assertEquals("Two", div2.wholeText());
+
+        String genClassQ = "html > body > div.-\\34 a";
+        assertEquals(genClassQ, div1.cssSelector());
+        assertSame(div1, doc.expectFirst(genClassQ));
+
+        String deepIdQ = "html > body > #-\\34 a";
+        assertEquals(idQ, div2.cssSelector());
+        assertSame(div2, doc.expectFirst(deepIdQ));
+
+        assertEquals("(ImmediateParentRun (Tag 'html')(Tag 'body')(And (Tag 'div')(Class '.-4a')))", sexpr(genClassQ));
+        assertEquals("(ImmediateParentRun (Tag 'html')(Tag 'body')(Id '#-4a'))", sexpr(deepIdQ));
+    }
+
+    @Test void trailingParens() {
+        SelectorParseException exception =
+            assertThrows(SelectorParseException.class, () -> QueryParser.parse("div:has(p))"));
+        assertEquals("Could not parse query 'div:has(p))': unexpected token at ')'", exception.getMessage());
+    }
+
+    @Test void consecutiveCombinators() {
+        Selector.SelectorParseException exception1 =
+                assertThrows(Selector.SelectorParseException.class, () -> QueryParser.parse("div>>p"));
+        assertEquals(
+                "Could not parse query 'div>>p': unexpected token at '>p'",
+                exception1.getMessage());
+
+        Selector.SelectorParseException exception2 =
+                assertThrows(Selector.SelectorParseException.class, () -> QueryParser.parse("+ + div"));
+        assertEquals(
+                "Could not parse query '+ + div': unexpected token at '+ div'",
+                exception2.getMessage());
+    }
+
+    @Test void hasNodeSelector() {
+        String q = "p:has(::comment:contains(some text))";
+        Evaluator e = QueryParser.parse(q);
+        assertEquals("(And (Tag 'p')(Has (And (InstanceType '::comment')(ContainsValue ':contains(some text)'))))", sexpr(e));
+        assertEquals(q, e.toString());
     }
 }

@@ -1,6 +1,8 @@
 package org.jsoup.nodes;
 
 import org.jsoup.helper.Validate;
+import org.jsoup.internal.QuietAppendable;
+import org.jspecify.annotations.Nullable;
 
 import java.util.List;
 
@@ -40,6 +42,16 @@ public abstract class LeafNode extends Node {
 
     String coreValue() {
         return attr(nodeName());
+    }
+
+    @Override @Nullable
+    public Element parent() {
+        return parentNode;
+    }
+
+    @Override
+    public String nodeValue() {
+        return coreValue();
     }
 
     void coreValue(String value) {
@@ -107,6 +119,9 @@ public abstract class LeafNode extends Node {
     protected List<Node> ensureChildNodes() {
         return EmptyNodes;
     }
+
+    @Override
+    void outerHtmlTail(QuietAppendable accum, Document.OutputSettings out) {}
 
     @Override
     protected LeafNode doClone(Node parent) {

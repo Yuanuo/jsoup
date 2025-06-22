@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@SuppressWarnings("deprecation") // keeps tests for ensureNotNull
 public class ValidateTest {
     @Test
     public void testNotNull() {
@@ -105,6 +106,23 @@ public class ValidateTest {
         } catch (ValidationException e) {
             threw = true;
             assertEquals("Object must not be null: additional info", e.getMessage());
+        }
+        assertTrue(threw);
+    }
+
+    @Test void expectNotNull() {
+        String foo = "Foo";
+        String foo2 = Validate.expectNotNull(foo);
+        assertSame(foo, foo2);
+
+        // Test with a null object
+        String bar = null;
+        boolean threw = false;
+        try {
+            Validate.expectNotNull(bar);
+        } catch (ValidationException e) {
+            threw = true;
+            assertEquals("Object must not be null", e.getMessage());
         }
         assertTrue(threw);
     }

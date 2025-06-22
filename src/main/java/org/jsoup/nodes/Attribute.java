@@ -1,8 +1,9 @@
 package org.jsoup.nodes;
 
-import org.jsoup.SerializationException;
 import org.jsoup.helper.Validate;
 import org.jsoup.internal.Normalizer;
+import org.jsoup.internal.QuietAppendable;
+import org.jsoup.internal.SharedConstants;
 import org.jsoup.internal.StringUtil;
 import org.jsoup.nodes.Document.OutputSettings.Syntax;
 import org.jspecify.annotations.Nullable;
@@ -54,7 +55,7 @@ public class Attribute implements Map.Entry<String, String>, Cloneable  {
     }
 
     /**
-     Get the attribute key.
+     Get the attribute's key (aka name).
      @return the attribute key
      */
     @Override
@@ -123,17 +124,54 @@ public class Attribute implements Map.Entry<String, String>, Cloneable  {
     }
 
     /**
+     Get this attribute's key prefix, if it has one; else the empty string.
+     <p>For example, the attribute {@code og:title} has prefix {@code og}, and local {@code title}.</p>
+
+     @return the tag's prefix
+     @since 1.20.1
+     */
+    public String prefix() {
+        int pos = key.indexOf(':');
+        if (pos == -1) return "";
+        else return key.substring(0, pos);
+    }
+
+    /**
+     Get this attribute's local name. The local name is the name without the prefix (if any).
+     <p>For example, the attribute key {@code og:title} has local name {@code title}.</p>
+
+     @return the tag's local name
+     @since 1.20.1
+     */
+    public String localName() {
+        int pos = key.indexOf(':');
+        if (pos == -1) return key;
+        else return key.substring(pos + 1);
+    }
+
+    /**
+     Get this attribute's namespace URI, if the attribute was prefixed with a defined namespace name. Otherwise, returns
+     the empty string. These will only be defined if using the XML parser.
+     @return the tag's namespace URI, or empty string if not defined
+     @since 1.20.1
+     */
+    public String namespace() {
+        // set as el.attributes.userData(SharedConstants.XmlnsAttr + prefix, ns)
+        if (parent != null) {
+            String ns = (String) parent.userData(SharedConstants.XmlnsAttr + prefix());
+            if (ns != null)
+                return ns;
+        }
+        return "";
+    }
+
+    /**
      Get the HTML representation of this attribute; e.g. {@code href="index.html"}.
      @return HTML
      */
     public String html() {
         StringBuilder sb = StringUtil.borrowBuilder();
-        
-        try {
-        	html(sb, (new Document("")).outputSettings());
-        } catch(IOException exception) {
-        	throw new SerializationException(exception);
-        }
+        html(QuietAppendable.wrap(sb), new Document.OutputSettings());
         return StringUtil.releaseBuilder(sb);
     }
 
@@ -154,17 +192,27 @@ public class Attribute implements Map.Entry<String, String>, Cloneable  {
         return parent.sourceRange(key);
     }
 
-    protected void html(Appendable accum, Document.OutputSettings out) throws IOException {
+    void html(QuietAppendable accum, Document.OutputSettings out) {
         html(key, val, accum, out);
     }
 
-    protected static void html(String key, @Nullable String val, Appendable accum, Document.OutputSettings out) throws IOException {
+    static void html(String key, @Nullable String val, QuietAppendable accum, Document.OutputSettings out) {
         key = getValidKey(key, out.syntax());
         if (key == null) return; // can't write it :(
         htmlNoValidate(key, val, accum, out);
     }
 
-    static void htmlNoValidate(String key, @Nullable String val, Appendable accum, Document.OutputSettings out) throws IOException {
+    /** @deprecated internal method and will be removed */ // todo @Deprecate
+    protected void html(Appendable accum, Document.OutputSettings out) throws IOException {
+        html(key, val, accum, out);
+    }
+
+    /** @deprecated internal method and will be removed */ // todo @Deprecate
+    protected static void html(String key, @Nullable String val, Appendable accum, Document.OutputSettings out) throws IOException {
+        html(key, val, QuietAppendable.wrap(accum), out);
+    }
+
+    static void htmlNoValidate(String key, @Nullable String val, QuietAppendable accum, Document.OutputSettings out) {
         // structured like this so that Attributes can check we can write first, so it can add whitespace correctly
         accum.append(key);
         if (!shouldCollapseAttribute(key, val, out)) {
@@ -263,8 +311,7 @@ public class Attribute implements Map.Entry<String, String>, Cloneable  {
 
     // collapse unknown foo=null, known checked=null, checked="", checked=checked; write out others
     protected static boolean shouldCollapseAttribute(final String key, @Nullable final String val, final Document.OutputSettings out) {
-        return (
-            out.syntax() == Syntax.html &&
+        return (out.syntax() == Syntax.html &&
                 (val == null || (val.isEmpty() || val.equalsIgnoreCase(key)) && Attribute.isBooleanAttribute(key)));
     }
 
